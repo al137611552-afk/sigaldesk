@@ -1,0 +1,38 @@
+# 纸上撮合配置。撮合口径见 ADR-0010，仓位与止损口径与统计侧（ADR-0008）共用同一套代码。
+#
+# ⚠️ enabled 默认 false：没人明确打开之前，盯盘就只是盯盘。
+#    这是纸上账户，不会真的下单；但把它当成实盘预期是危险的（没有盘口、没有部分成交）。
+
+enabled: false
+initial_cash: 100000
+
+# 仓位定量
+strategy:
+  mode: risk            # risk / fixed / notional
+  risk_per_trade: 0.005 # 单笔风险 = 权益的 0.5%
+  fixed_qty: 1
+  notional_per_trade: 1000
+  # 止损止盈：与 /api/stats 的默认口径保持一致，两边算出来的是同一个止损位
+  exits:
+    horizon_bars: 20
+    stop_pct: 0.005
+    target_pct: 0.010
+    atr_key: atr14      # 信号快照里有 atr14 就按 ATR 倍数走，否则回落到百分比
+    stop_atr: 1.5
+    target_atr: 3.0
+
+# 风控（FR-7.2）。全部以权益比例表示，0 表示不限。
+risk:
+  max_risk_per_trade: 0.01     # 单笔最大亏损 ≤ 1%
+  max_notional_per_trade: 0.30 # 单笔名义 ≤ 30%
+  max_symbol_exposure: 0.25    # 单品种 ≤ 25%
+  max_total_exposure: 1.0      # 总持仓 ≤ 100%（不加杠杆）
+  daily_loss_limit: 0.03       # 当日已实现亏损达 3% 熔断
+  max_orders_per_window: 10
+  rate_window_s: 3600
+
+# 撮合摩擦
+fills:
+  fee_bps: 2.0        # **单边**手续费（基点）
+  slippage_bps: 1.0   # 单边滑点，按方向恶化
+  close_on_horizon: true

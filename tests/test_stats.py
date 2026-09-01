@@ -1,0 +1,322 @@
+"""信号质量统计单测。全部纯逻辑：手工构造 bar 序列，逐条核对口径。
+
+统计口径最容易在四个地方把结论做假，每一条都有对应测试：
+入场价、同根同时触及止损止盈、成本、neutral 信号是否算胜率。
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+
+import pytest
+
+from sigdesk.core.models import CST, Bar, Timeframe
+from sigdesk.rules.model import Direction, Signal
+from sigdesk.stats.outcome import ExitReason, Outcome, OutcomeParams, evaluate, evaluate_all
+from sigdesk.stats.report import (
+    build_report,
+    format_report,
+    group_by,
+    local_hour,
+    summarize,
+)
+
+BTC = "CRYPTO.OKX.BTCUSDT.PERP"
+RB = "CN.SHFE.rb2610"
+
+
+def sig(
+    fired_at: int = 600, price: float = 100.0, direction: Direction = Direction.LONG,
+    symbol: str = BTC, rule: str = "r1", context: dict[str, float | None] | None = None,
+) -> Signal:
+    return Signal(
+        rule_id=rule, symbol=symbol, direction=direction, timeframe=Timeframe.M1,
+        fired_at=fired_at, trigger_price=price, dedup_key=f"{symbol}:{rule}:{fired_at}",
+        context=context or {},
+    )
+
+
+def bar(ts: int, o: float, h: float, low: float, c: float, symbol: str = BTC) -> Bar:
+    return Bar(symbol, Timeframe.M1, ts - 60, ts, o, h, low, c, 1.0)
+
+
+def flat_path(start_ts: int, prices: list[float], symbol: str = BTC) -> list[Bar]:
+    """每根 bar 的 OHLC 都等于给定价格 —— 只想控制"走到哪"，不想引入影线噪声。"""
+    return [bar(start_ts + 60 * i, p, p, p, p, symbol) for i, p in enumerate(prices, start=1)]
+
+
+# ---------------------------------------------------------------- 入场价口径
+
+
+def test_entry_defaults_to_next_bar_open_not_signal_close() -> None:
+    """信号在 bar 收盘时才成立，那个收盘价已经过去、成交不到。
+
+    用它统计会系统性偏乐观 —— 尤其对"放量突破"这类信号，信号那根本身就走了一大截。
+    """
+    s = sig(price=100.0)
+    future = [bar(660, o=105.0, h=106.0, low=104.0, c=105.5)]
+
+    default = evaluate(s, future, OutcomeParams(horizon_bars=1))
+    optimistic = evaluate(s, future, OutcomeParams(horizon_bars=1, entry_on_next_open=False))
+
+    assert default.entry_price == 105.0, "默认应当用次根开盘价入场"
+    assert optimistic.entry_price == 100.0
+    assert optimistic.gross_ret > default.gross_ret, "用信号收盘价入场必然更好看"
+
+
+def test_no_future_bars_is_marked_not_silently_zero() -> None:
+    """信号之后没有数据时必须标成"无法评价"，不能当成 0 收益混进胜率。"""
+    out = evaluate(sig(), [])
+    assert out.reason is ExitReason.NO_DATA
+    assert not out.evaluated
+    assert summarize([out]).directional == 0
+
+
+# ---------------------------------------------------------------- 止损止盈
+
+
+def test_stop_wins_when_both_hit_on_the_same_bar() -> None:
+    """同一根同时触及止损与止盈时保守取止损 —— bar 数据给不出先后，
+    取止盈就是在给自己发奖。"""
+    s = sig()
+    # 入场 100，止损 99.5、止盈 101；这根 bar 高低都够到
+    future = [bar(660, o=100.0, h=102.0, low=99.0, c=100.0)]
+
+    out = evaluate(s, future, OutcomeParams(stop_pct=0.005, target_pct=0.01))
+
+    assert out.reason is ExitReason.STOP
+    assert out.exit_price == pytest.approx(99.5)
+
+
+def test_target_is_taken_when_only_target_hit() -> None:
+    s = sig()
+    future = [bar(660, o=100.0, h=101.5, low=99.9, c=101.0)]
+    out = evaluate(s, future, OutcomeParams(stop_pct=0.005, target_pct=0.01))
+    assert out.reason is ExitReason.TARGET
+    assert out.exit_price == pytest.approx(101.0)
+    assert out.gross_ret == pytest.approx(0.01)
+
+
+def test_horizon_exit_uses_close() -> None:
+    s = sig()
+    future = flat_path(600, [100.0, 100.1, 100.2])
+    out = evaluate(s, future, OutcomeParams(horizon_bars=3, stop_pct=0.5, target_pct=0.5))
+    assert out.reason is ExitReason.HORIZON
+    assert out.bars_held == 3
+    assert out.exit_price == pytest.approx(100.2)
+
+
+def test_short_direction_is_normalised() -> None:
+    """方向已归一化：ret > 0 恒表示"这条信号是对的"，空头下跌也应为正收益。"""
+    s = sig(direction=Direction.SHORT)
+    future = flat_path(600, [100.0, 99.0])
+    out = evaluate(s, future, OutcomeParams(horizon_bars=2, stop_pct=0.5, target_pct=0.5))
+    assert out.gross_ret == pytest.approx(0.01)
+    assert out.is_win
+
+
+def test_short_stop_is_above_entry() -> None:
+    s = sig(direction=Direction.SHORT)
+    future = [bar(660, o=100.0, h=100.6, low=100.0, c=100.5)]
+    out = evaluate(s, future, OutcomeParams(stop_pct=0.005, target_pct=0.01))
+    assert out.reason is ExitReason.STOP
+    assert out.exit_price == pytest.approx(100.5)
+    assert out.ret < 0
+
+
+def test_atr_key_overrides_percentage_stops() -> None:
+    """期货各品种波动率差异极大，固定百分比会让活跃品种全打止损、呆滞品种永不触发。"""
+    s = sig(context={"atr14": 2.0})
+    future = [bar(660, o=100.0, h=100.5, low=96.5, c=98.0)]
+
+    pct = evaluate(s, future, OutcomeParams(stop_pct=0.005, target_pct=0.01))
+    atr = evaluate(
+        s, future, OutcomeParams(stop_pct=0.005, target_pct=0.01, atr_key="atr14", stop_atr=1.5)
+    )
+
+    assert pct.exit_price == pytest.approx(99.5)  # 100 × 0.5%
+    assert atr.exit_price == pytest.approx(97.0)  # 100 − 1.5×2.0
+    assert atr.reason is ExitReason.STOP
+
+
+def test_missing_atr_falls_back_to_percentage() -> None:
+    s = sig(context={"atr14": None})
+    future = [bar(660, o=100.0, h=100.1, low=99.0, c=99.2)]
+    out = evaluate(s, future, OutcomeParams(atr_key="atr14", stop_pct=0.005))
+    assert out.exit_price == pytest.approx(99.5)
+
+
+# ---------------------------------------------------------------- 成本
+
+
+def test_cost_is_charged_on_both_sides() -> None:
+    """一进一出都要付。只扣单边会让高频规则看起来能赚钱。"""
+    s = sig()
+    future = flat_path(600, [100.0, 101.0])
+    p = OutcomeParams(horizon_bars=2, stop_pct=0.5, target_pct=0.5, cost_bps=5.0)
+
+    out = evaluate(s, future, p)
+
+    assert out.gross_ret == pytest.approx(0.01)
+    assert out.ret == pytest.approx(0.01 - 2 * 5e-4)
+
+
+def test_zero_cost_is_gross_return() -> None:
+    out = evaluate(sig(), flat_path(600, [100.0, 101.0]),
+                   OutcomeParams(horizon_bars=2, stop_pct=0.5, target_pct=0.5))
+    assert out.ret == out.gross_ret
+
+
+# ---------------------------------------------------------------- MFE / MAE
+
+
+def test_mfe_and_mae_track_the_whole_path() -> None:
+    """最大浮盈/浮亏用来判断止损是不是设太紧了 —— 只看最终收益看不出这件事。"""
+    s = sig()
+    future = [
+        bar(660, o=100.0, h=100.0, low=100.0, c=100.0),
+        bar(720, o=100.0, h=103.0, low=98.0, c=100.0),
+        bar(780, o=100.0, h=100.0, low=100.0, c=100.0),
+    ]
+    out = evaluate(s, future, OutcomeParams(horizon_bars=3, stop_pct=0.5, target_pct=0.5))
+    assert out.mfe == pytest.approx(0.03)
+    assert out.mae == pytest.approx(-0.02)
+
+
+def test_mfe_mae_for_short_are_direction_adjusted() -> None:
+    s = sig(direction=Direction.SHORT)
+    future = [bar(660, o=100.0, h=103.0, low=98.0, c=100.0)]
+    out = evaluate(s, future, OutcomeParams(horizon_bars=1, stop_pct=0.5, target_pct=0.5))
+    assert out.mfe == pytest.approx(0.02), "空头下跌 2% 才是有利偏移"
+    assert out.mae == pytest.approx(-0.03)
+
+
+# ---------------------------------------------------------------- 汇总
+
+
+def outcomes_for(rets: list[float], direction: Direction = Direction.LONG) -> list[Outcome]:
+    return [
+        Outcome(
+            rule_id="r1", symbol=BTC, direction=direction, fired_at=600 + 60 * i,
+            entry_ts=600, entry_price=100.0, exit_ts=660, exit_price=100 * (1 + r),
+            reason=ExitReason.TARGET if r > 0 else ExitReason.STOP,
+            ret=r, gross_ret=r, mfe=max(r, 0.0), mae=min(r, 0.0), bars_held=1,
+        )
+        for i, r in enumerate(rets)
+    ]
+
+
+def test_summarize_basic_metrics() -> None:
+    st = summarize(outcomes_for([0.02, -0.01, 0.01, -0.01]))
+    assert (st.signals, st.evaluated, st.directional) == (4, 4, 4)
+    assert (st.wins, st.losses) == (2, 2)
+    assert st.win_rate == pytest.approx(0.5)
+    assert st.avg_return == pytest.approx(0.0025)
+    assert st.avg_win == pytest.approx(0.015)
+    assert st.avg_loss == pytest.approx(-0.01)
+    assert st.payoff == pytest.approx(1.5)
+    assert st.false_rate == pytest.approx(0.5)
+
+
+def test_neutral_signals_do_not_enter_win_rate() -> None:
+    """neutral 是"去看一眼"的提示，不是方向判断。把它算进胜率等于给自己注水。"""
+    st = summarize(outcomes_for([0.02, -0.01], direction=Direction.NEUTRAL))
+    assert st.signals == 2 and st.evaluated == 2
+    assert st.directional == 0
+    assert st.win_rate == 0.0 and st.avg_return == 0.0
+    assert st.avg_mfe != 0.0, "但 MFE/MAE 对 neutral 仍然有意义"
+
+
+def test_summarize_empty_is_zeroed_not_crash() -> None:
+    st = summarize([])
+    assert st.signals == 0 and st.win_rate == 0.0 and st.payoff == 0.0
+
+
+def test_payoff_without_losses_is_zero_not_infinity() -> None:
+    st = summarize(outcomes_for([0.01, 0.02]))
+    assert st.losses == 0
+    assert st.payoff == 0.0
+
+
+def test_median_return() -> None:
+    assert summarize(outcomes_for([0.01, 0.02, 0.03])).median_return == pytest.approx(0.02)
+    assert summarize(outcomes_for([0.01, 0.03])).median_return == pytest.approx(0.02)
+
+
+# ---------------------------------------------------------------- 分组与可复现
+
+
+def test_local_hour_uses_market_timezone() -> None:
+    """期货看北京时间才有意义（夜盘 21:00 与日盘 09:00 是完全不同的时段）。"""
+    ts = int(dt.datetime(2026, 8, 28, 21, 30, tzinfo=CST).timestamp())
+    futures = Outcome("r", RB, Direction.LONG, ts, ts, 1.0, ts, 1.0, ExitReason.HORIZON,
+                      0.0, 0.0, 0.0, 0.0, 1)
+    crypto = Outcome("r", BTC, Direction.LONG, ts, ts, 1.0, ts, 1.0, ExitReason.HORIZON,
+                     0.0, 0.0, 0.0, 0.0, 1)
+    assert local_hour(futures) == 21
+    assert local_hour(crypto) == dt.datetime.fromtimestamp(ts, dt.UTC).hour
+
+
+def test_group_by_output_is_sorted() -> None:
+    """报告要逐字节可复现 ⇒ 分组键必须排序输出，不能沿用插入顺序。"""
+    outs = outcomes_for([0.01, -0.01, 0.02])
+    shuffled = [outs[2], outs[0], outs[1]]
+
+    grouped = group_by(shuffled, lambda o: o.fired_at)
+
+    assert list(grouped) == sorted(grouped)
+    assert list(grouped) != [o.fired_at for o in shuffled], "顺序没被归一化，测试就没意义"
+
+
+def test_report_is_reproducible() -> None:
+    """M3 验收：同一批输入两次汇总，结果完全一致。"""
+    outs = outcomes_for([0.02, -0.01, 0.015, -0.005, 0.0])
+    a = build_report(outs, {"horizon_bars": 20})
+    b = build_report(list(reversed(outs)), {"horizon_bars": 20})
+    assert a.as_dict()["overall"] == b.as_dict()["overall"], "汇总结果不该依赖输入顺序"
+    assert build_report(outs).as_dict() == build_report(outs).as_dict()
+
+
+def test_report_carries_the_params() -> None:
+    """一份不写明口径的胜率没有意义 —— 20 根持有期和 200 根能差出天壤之别。"""
+    report = build_report(outcomes_for([0.01]), {"horizon_bars": 20, "cost_bps": 5.0})
+    assert report.params == {"horizon_bars": 20, "cost_bps": 5.0}
+    assert "horizon_bars" in format_report(report)
+
+
+def test_report_groups_all_four_dimensions() -> None:
+    outs = outcomes_for([0.01, -0.01])
+    outs += [
+        Outcome("r2", RB, Direction.SHORT, 700, 700, 1.0, 760, 1.0, ExitReason.TARGET,
+                0.02, 0.02, 0.02, 0.0, 1)
+    ]
+    report = build_report(outs)
+    assert set(report.by_rule) == {"r1", "r2"}
+    assert set(report.by_symbol) == {BTC, RB}
+    assert set(report.by_direction) == {"long", "short"}
+    assert report.by_rule["r2"].wins == 1
+
+
+def test_format_report_is_readable() -> None:
+    text = format_report(build_report(outcomes_for([0.02, -0.01])))
+    assert "信号质量报告" in text
+    assert "胜率" in text and "假信号率" in text
+
+
+# ---------------------------------------------------------------- 批量评价
+
+
+def test_evaluate_all_only_uses_bars_after_the_signal() -> None:
+    """评价用的数据必须完全落在信号之后 —— 与 INV-1 同一个道理，物理截断。"""
+    series = flat_path(0, [100.0] * 5 + [110.0] * 5)
+    s = sig(fired_at=series[4].close_ts)
+
+    (out,) = evaluate_all([s], {BTC: series}, OutcomeParams(horizon_bars=1))
+
+    assert out.entry_ts > s.fired_at
+    assert out.entry_price == 110.0
+
+
+def test_evaluate_all_handles_unknown_symbol() -> None:
+    (out,) = evaluate_all([sig(symbol="NOPE")], {BTC: flat_path(0, [1.0])})
+    assert out.reason is ExitReason.NO_DATA

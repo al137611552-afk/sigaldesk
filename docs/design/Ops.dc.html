@@ -1,0 +1,200 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body{margin:0;background:#0e1116;color:#e6edf3;
+      font:14px/1.5 system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+    *{box-sizing:border-box}
+    a{color:#58a6ff} a:hover{color:#79bbff}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+      font-variant-numeric:tabular-nums}
+    .lbl{color:#8b949e;font-size:11px;letter-spacing:.3px}
+  </style>
+</helmet>
+
+<div style="width:1440px;height:900px;display:flex;flex-direction:column;overflow:hidden">
+
+  <div style="display:flex;align-items:center;gap:16px;padding:10px 16px;border-bottom:1px solid #262c36">
+    <h1 style="font-size:16px;margin:0;letter-spacing:.5px">Signal Desk</h1>
+    <span class="mono" style="font-size:12px;color:#8b949e;margin-left:auto">01:42:07Z</span>
+  </div>
+  <div style="display:flex;gap:4px;padding:8px 16px 0;border-bottom:1px solid #262c36">
+    <div style="color:#8b949e;padding:8px 14px;border-bottom:2px solid transparent;font-size:13px">盯盘</div>
+    <div style="color:#8b949e;padding:8px 14px;border-bottom:2px solid transparent;font-size:13px">质量统计</div>
+    <div style="color:#e6edf3;padding:8px 14px;border-bottom:2px solid #58a6ff;font-size:13px">运行健康</div>
+  </div>
+
+  <div style="padding:16px;display:flex;flex-direction:column;gap:18px;flex:1;min-height:0">
+
+    <!-- 整体状态：一行说完，出问题时这行就是红的 -->
+    <div style="display:flex;align-items:center;gap:14px;background:#161b22;border:1px solid #d29922;border-left-width:3px;border-radius:8px;padding:13px 16px">
+      <svg width="18" height="18" viewBox="0 0 20 20" style="flex:none">
+        <path d="M10 2.5 L18.5 17.5 L1.5 17.5 Z" fill="none" stroke="#d29922" stroke-width="1.6" stroke-linejoin="round"></path>
+        <line x1="10" y1="8" x2="10" y2="12.5" stroke="#d29922" stroke-width="1.6" stroke-linecap="round"></line>
+        <circle cx="10" cy="15" r="0.9" fill="#d29922"></circle>
+      </svg>
+      <div style="min-width:0">
+        <div style="font-size:14px;color:#d29922">1 处需要关注</div>
+        <div class="lbl" style="margin-top:1px">rb2610 自 21:44 起无新数据，且当前处于交易时段内</div>
+      </div>
+      <div style="margin-left:auto;display:flex;gap:26px">
+        <sc-for list="{{overview}}" as="o" hint-placeholder-count="5">
+          <div style="text-align:right">
+            <div class="lbl">{{o.k}}</div>
+            <div class="mono" style="font-size:16px;margin-top:1px;color:{{o.color}}">{{o.v}}</div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <!-- 数据流 -->
+    <div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:9px">数据流</div>
+      <div style="display:grid;grid-template-columns:repeat(2, minmax(0, 1fr));gap:12px">
+        <sc-for list="{{feeds}}" as="f" hint-placeholder-count="2">
+          <div style="background:#161b22;border:1px solid {{f.border}};border-radius:8px;padding:12px 14px">
+            <div style="display:flex;align-items:center;gap:8px">
+              <svg width="8" height="8" viewBox="0 0 8 8" style="flex:none"><circle cx="4" cy="4" r="3.4" fill="{{f.tone}}"></circle></svg>
+              <span style="font-size:13px">{{f.name}}</span>
+              <span class="lbl" style="margin-left:auto;color:{{f.tone}}">{{f.state}}</span>
+            </div>
+            <div style="display:flex;gap:24px;margin-top:11px">
+              <sc-for list="{{f.metrics}}" as="m" hint-placeholder-count="4">
+                <div>
+                  <div class="lbl">{{m.k}}</div>
+                  <div class="mono" style="font-size:15px;margin-top:1px;color:{{m.color}}">{{m.v}}</div>
+                </div>
+              </sc-for>
+              <div style="margin-left:auto;text-align:right;max-width:220px">
+                <div class="lbl">最后错误</div>
+                <div class="mono" style="font-size:11px;margin-top:3px;color:{{f.errColor}}">{{f.error}}</div>
+              </div>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <!-- 标的新鲜度：时间线才看得出缺口"什么时候、多久"，计数看不出 -->
+    <div style="flex:1;min-height:0">
+      <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:9px">
+        <span style="font-size:13px;font-weight:600">标的数据连续性</span>
+        <span class="lbl">最近 6 小时</span>
+        <span style="flex:1"></span>
+        <div style="display:flex;gap:16px">
+          <sc-for list="{{legend}}" as="g" hint-placeholder-count="3">
+            <div style="display:flex;align-items:center;gap:6px">
+              <svg width="14" height="7" viewBox="0 0 14 7"><rect width="14" height="7" rx="3.5" fill="{{g.fill}}"></rect></svg>
+              <span class="lbl">{{g.label}}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:10px;margin-bottom:5px;padding-left:196px">
+        <svg viewBox="0 0 900 12" width="100%" height="12" preserveAspectRatio="none">
+          <g fill="#8b949e" font-size="9" font-family="ui-monospace,monospace">
+            <sc-for list="{{ticks}}" as="t" hint-placeholder-count="7">
+              <text x="{{t.x}}" y="9" text-anchor="middle">{{t.label}}</text>
+            </sc-for>
+          </g>
+        </svg>
+      </div>
+
+      <sc-for list="{{symbols}}" as="s" hint-placeholder-count="4">
+        <div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #262c36">
+          <span class="mono" style="width:150px;flex:none;font-size:12px">{{s.name}}</span>
+          <span class="mono" style="width:36px;flex:none;text-align:right;font-size:11px;color:{{s.lagColor}}">{{s.lag}}</span>
+          <svg viewBox="0 0 900 14" width="100%" height="14" preserveAspectRatio="none" style="flex:1">
+            <rect x="0" y="4" width="900" height="6" rx="3" fill="#161b22"></rect>
+            <sc-for list="{{s.spans}}" as="sp" hint-placeholder-count="3">
+              <rect x="{{sp.x}}" y="4" width="{{sp.w}}" height="6" rx="3" fill="{{sp.fill}}"></rect>
+            </sc-for>
+          </svg>
+          <span class="mono" style="width:126px;flex:none;text-align:right;font-size:11px;color:#8b949e">{{s.last}}</span>
+          <span class="mono" style="width:66px;flex:none;text-align:right;font-size:11px;color:#8b949e">{{s.bars}}</span>
+        </div>
+      </sc-for>
+    </div>
+
+    <!-- 规则 -->
+    <div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:9px">已加载规则</div>
+      <div style="background:#161b22;border:1px solid #262c36;border-radius:8px;padding:12px 14px;display:flex;align-items:center;gap:20px">
+        <span class="mono" style="font-size:13px">multi-level-verify</span>
+        <span class="mono" style="font-size:11px;color:#8b949e">trend 15m/state → setup 5m/window(4) → trigger 1m/event</span>
+        <div style="display:flex;gap:20px;margin-left:auto">
+          <div><span class="lbl">方向 </span><span style="font-size:12px;color:#26a69a">多</span></div>
+          <div><span class="lbl">TTL </span><span class="mono" style="font-size:12px">6 根</span></div>
+          <div><span class="lbl">冷却 </span><span class="mono" style="font-size:12px">10m</span></div>
+          <div><span class="lbl">标的 </span><span class="mono" style="font-size:12px">4</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script>
+class Component extends DCLogic {
+  renderVals() {
+    const UP = '#26a69a', DOWN = '#ef5350', DIM = '#8b949e', WARN = '#d29922',
+          FG = '#e6edf3', LINE = '#262c36', PANEL = '#161b22';
+
+    const overview = [
+      { k: '运行时长', v: '6.2 h', color: FG },
+      { k: '已触发', v: '43', color: FG },
+      { k: '累计缺口', v: '1', color: WARN },
+      { k: '异常 bar', v: '0', color: FG },
+      { k: 'SSE 订阅', v: '1', color: FG },
+    ];
+
+    const feeds = [
+      { name: 'OKX WS（加密）', state: '已连接', tone: UP, border: LINE, error: '—',
+        errColor: DIM,
+        metrics: [
+          { k: '重连', v: '0', color: FG }, { k: '缺口', v: '0', color: FG },
+          { k: '回补', v: '0', color: FG }, { k: '标的', v: '2', color: FG },
+        ] },
+      { name: 'Quote API 轮询（期货）', state: '已连接 · 数据滞后', tone: WARN, border: WARN,
+        error: 'TimeoutError: 拉取 rb2610 超时', errColor: WARN,
+        metrics: [
+          { k: '重连', v: '2', color: WARN }, { k: '缺口', v: '1', color: WARN },
+          { k: '回补', v: '1', color: FG }, { k: '标的', v: '2', color: FG },
+        ] },
+    ];
+
+    const legend = [
+      { label: '数据连续', fill: UP },
+      { label: '缺口', fill: DOWN },
+      { label: '休市（正常）', fill: '#262c36' },
+    ];
+
+    const ticks = ['19:42', '20:42', '21:42', '22:42', '23:42', '00:42', '01:42']
+      .map((label, i) => ({ label, x: i * 150 }));
+
+    const seg = (fill, a, b) => ({ fill, x: a, w: b - a });
+    const symbols = [
+      { name: 'OKX.BTCUSDT.PERP', lag: '19s', lagColor: DIM, last: '01:42:00Z', bars: '1,247',
+        spans: [seg(UP, 0, 900)] },
+      { name: 'OKX.ETHUSDT.PERP', lag: '19s', lagColor: DIM, last: '01:42:00Z', bars: '1,247',
+        spans: [seg(UP, 0, 900)] },
+      { name: 'SHFE.rb2610', lag: '2m', lagColor: WARN, last: '21:44:00 CST', bars: '812',
+        spans: [seg(UP, 0, 188), seg(DOWN, 188, 214), seg(UP, 214, 320),
+                seg('#262c36', 320, 780), seg(UP, 780, 900)] },
+      { name: 'SHFE.au2610', lag: '—', lagColor: DIM, last: '01:42:00 CST', bars: '1,190',
+        spans: [seg(UP, 0, 900)] },
+    ];
+
+    return { overview, feeds, legend, ticks, symbols };
+  }
+}
+</script>
+</body>
+</html>

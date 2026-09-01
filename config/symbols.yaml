@@ -1,0 +1,96 @@
+# 标的清单。SymbolRegistry 是三方代码映射的唯一事实源（ADR-0002）。
+# 交易模块启动时会校验所需映射是否齐备，缺失则拒绝启动。
+symbols:
+  - uid: CN.SHFE.rb2610
+    market: CN
+    exchange: SHFE
+    code: rb2610
+    product: rb
+    calendar: cn_night_23
+    quote_code: rb2610
+    ctp_code: rb2610
+    price_tick: 1.0
+    multiplier: 10.0
+
+  # 跨零点夜盘（21:00-02:30）—— 分桶与交易日归属的关键样本
+  - uid: CN.SHFE.au2610
+    market: CN
+    exchange: SHFE
+    code: au2610
+    product: au
+    calendar: cn_night_0230
+    quote_code: au2610
+    ctp_code: au2610
+    price_tick: 0.02
+    multiplier: 1000.0
+
+  # 夜盘 21:00-01:00
+  - uid: CN.SHFE.cu2610
+    market: CN
+    exchange: SHFE
+    code: cu2610
+    product: cu
+    calendar: cn_night_01
+    quote_code: cu2610
+    ctp_code: cu2610
+    price_tick: 10.0
+    multiplier: 5.0
+
+  # 股指：日盘时段与商品不同（09:30-11:30 / 13:00-15:00），无夜盘
+  - uid: CN.CFFEX.IF2609
+    market: CN
+    exchange: CFFEX
+    code: IF2609
+    product: IF
+    calendar: cffex_index
+    quote_code: IF2609
+    ctp_code: IF2609
+    price_tick: 0.2
+    multiplier: 300.0
+
+  # 大商所农产品，夜盘 21:00-23:00
+  - uid: CN.DCE.m2701
+    market: CN
+    exchange: DCE
+    code: m2701
+    product: m
+    calendar: cn_night_23
+    quote_code: m2701
+    ctp_code: m2701
+    price_tick: 1.0
+    multiplier: 10.0
+
+  # 主连：**由本系统用真实合约自行拼接**（scripts/build_continuous.py），
+  # 不是数据源的 rb8888 —— 那个两接口口径不一致，禁止入库（CLAUDE.md 坑#9）。
+  # 故意不给 quote_code：没有 quote_code 就没人能直接去拉它的 K 线。
+  # main_code 只用于查 main-by-date 的换月区间（要 9999，传 rb/rb8888 会静默返回空）。
+  - uid: CN.SHFE.rb.CONT
+    market: CN
+    exchange: SHFE
+    code: rb
+    product: rb
+    calendar: cn_night_23
+    main_code: rb9999
+    price_tick: 1.0
+    multiplier: 10.0
+    is_continuous: true
+
+  # 加密永续（M0-B）。exchange 选 OKX 的实测理由见 ADR-0005。
+  # code 就是 OKX 的 instId；multiplier = ctVal（张数 = volume / multiplier）。
+  - uid: CRYPTO.OKX.BTCUSDT.PERP
+    market: CRYPTO
+    exchange: OKX
+    code: BTC-USDT-SWAP
+    calendar: crypto_24x7
+    ccxt_symbol: BTC/USDT:USDT
+    price_tick: 0.1
+    multiplier: 0.01
+
+  - uid: CRYPTO.OKX.ETHUSDT.PERP
+    market: CRYPTO
+    exchange: OKX
+    code: ETH-USDT-SWAP
+    calendar: crypto_24x7
+    ccxt_symbol: ETH/USDT:USDT
+    price_tick: 0.01
+    multiplier: 0.1

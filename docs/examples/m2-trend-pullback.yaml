@@ -1,0 +1,47 @@
+# ⚠️ 这是 **M2 的目标形态**，M1 的加载器会明确拒绝它（多级别条件树 + 状态机 + TTL 尚未实现）。
+# 放在 docs/ 而不是 config/rules/：config/rules 下的文件会被真加载，
+# 放一个加载不了的样板会让整个启动失败。
+# 示例：大级别定方向 + 中级别回调 + 小级别扣扳机
+# 演示三档形态混用：A表达式(指标) / B结构原语 / C Python插件
+id: trend-pullback-long
+enabled: true
+description: 1h 多头排列，15m 回调至超卖区，5m 放量站上均线
+
+universe:
+  - CN.SHFE.rb.MAIN          # 期货：自动跟随主力换月（换月后状态机重置）
+  - CRYPTO.BINANCE.BTCUSDT.PERP
+
+timeframes:
+  trend: 1h
+  setup: 15m
+  trigger: 5m
+
+conditions:
+  - on: trend
+    mode: state              # 取最近【已收盘】1h bar，持续状态
+    when: "ema(close,20) > ema(close,60) and close > ema(close,60)"
+
+  - on: setup
+    mode: window             # 最近 6 根 15m 内出现过即可
+    within: 6
+    when: "rsi(14) < 45 and not breakout(range(20), dir='down')"   # B档结构原语
+
+  - on: trigger
+    mode: event              # 边沿触发：上根不成立、本根成立
+    when: "cross_up(close, ema(close,20)) and volume > sma(volume,20)*1.5"
+
+emit:
+  direction: long
+  confirm_on_close: true     # 只在 5m 收盘后报，防重绘
+  ttl: 8 bars                # armed 后 8 根 5m 内没触发就作废
+  cooldown: 30m
+  dedup_key: "{symbol}:{rule}:{trend_bar_close_ts}"
+  priority: high
+  channels: [telegram, bark]
+
+# 可选：把 trigger 条件换成自定义 Python 插件
+# conditions:
+#   - on: trigger
+#     mode: event
+#     plugin: inside_bar_breakout
+#     params: { lookback: 20 }

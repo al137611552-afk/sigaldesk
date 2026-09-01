@@ -1,0 +1,17 @@
+.env
+*.key
+*.pem
+data/
+*.parquet
+*.duckdb
+*.sqlite3
+__pycache__/
+.venv/
+node_modules/
+dist/
+.pytest_cache/
+acceptance-log.txt
+.signal-desk/
+*.zip
+.ruff_cache/
+.mypy_cache/

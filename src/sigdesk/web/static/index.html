@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signal Desk</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230e1116'/%3E%3Cpath d='M3 11l3-4 3 2 4-6' stroke='%2326a69a' stroke-width='1.8' fill='none'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>Signal Desk</h1>
+    <div class="badges">
+      <div id="alerts" class="alert-opts" title="信号到达时怎么提醒你">
+        <button class="opt" data-alert="toast" type="button">弹窗</button>
+        <button class="opt" data-alert="sound" type="button">声音</button>
+        <button class="opt" data-alert="speech" type="button">播报</button>
+        <button class="opt" data-alert="desktop" type="button">桌面通知</button>
+      </div>
+      <span id="mode" class="badge">加载中…</span>
+      <span id="flows" class="badge mono">—</span>
+      <span id="clock" class="mono lbl">—</span>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-view="live">盯盘</button>
+    <button class="tab" data-view="rules">规则</button>
+    <button class="tab" data-view="stats">质量统计</button>
+    <button class="tab" data-view="trade">纸上账户</button>
+    <button class="tab" data-view="ops">运行健康</button>
+  </nav>
+
+  <!-- ── 盯盘 ───────────────────────────────────── -->
+  <section id="view-live" class="view active">
+    <div id="chains" class="chains" hidden>
+      <div class="chains-head"><b>规则链路状态</b><span id="chains-sum" class="lbl"></span></div>
+      <div id="chain-grid" class="chain-grid"></div>
+    </div>
+
+    <div class="live-body">
+      <div class="chart-pane">
+        <div class="chart-head">
+          <span id="chart-sym" class="mono" style="font-size:14px">—</span>
+          <div id="ohlc" class="ohlc mono"></div>
+          <span class="spacer"></span>
+          <select id="c-symbol"></select>
+          <div id="tf-group" class="tf-group"></div>
+          <button id="grid-toggle" type="button"
+            title="九宫格：同一标的的 9 个周期同屏">九宫格</button>
+        </div>
+        <div id="chart"><div id="ma-legend" class="ma-legend"></div></div>
+        <div id="grid" class="grid" hidden></div>
+        <p id="chart-note" class="chart-note"></p>
+      </div>
+
+      <div class="rail">
+        <div class="rail-head">
+          <b>信号流</b><span id="sig-count" class="lbl"></span>
+          <div class="rail-filters">
+            <select id="f-rule"><option value="">全部规则</option></select>
+            <select id="f-symbol"><option value="">全部标的</option></select>
+          </div>
+        </div>
+        <div id="detail"></div>
+        <div id="feed" class="feed"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 规则（FR-5.3：增删改查 + 语法校验 + 历史试算）─────── -->
+  <section id="view-rules" class="view">
+    <div class="rules-body">
+      <div class="rule-list">
+        <div class="rail-head">
+          <b>规则</b><span id="rule-count" class="lbl"></span>
+          <span class="spacer"></span>
+          <button id="rule-new" type="button">新建</button>
+        </div>
+        <div id="rule-items" class="scroll"></div>
+      </div>
+
+      <div class="rule-edit">
+        <div class="chart-head">
+          <span id="rule-title" class="mono" style="font-size:14px">—</span>
+          <span id="rule-dirty" class="badge warn" hidden>未保存</span>
+          <span class="spacer"></span>
+          <button id="rule-validate" type="button">校验</button>
+          <button id="rule-trial" type="button">历史试算</button>
+          <button id="rule-save" type="button">保存</button>
+          <button id="rule-delete" type="button" class="danger">删除</button>
+        </div>
+        <div id="rule-banner"></div>
+        <textarea id="rule-src" class="mono" spellcheck="false"
+          placeholder="选择左边的规则，或点「新建」"></textarea>
+        <div id="rule-msg" class="rule-msg"></div>
+      </div>
+
+      <div class="rule-trial scroll">
+        <div class="rail-head"><b>试算结果</b><span id="trial-sub" class="lbl"></span></div>
+        <div id="trial-body" class="ops">
+          <p class="empty">试算不落盘、不推送、不下单。<br>
+            用的是与实盘同一个引擎，所以结果逐条一致。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 质量统计 ───────────────────────────────── -->
+  <section id="view-stats" class="view">
+    <form id="stats-form" class="params">
+      <b>统计口径</b>
+      <label class="chip"><span class="lbl">持有期</span>
+        <input class="mono" type="number" name="horizon_bars" value="20" min="1" max="500"><span class="lbl">根</span></label>
+      <label class="chip"><span class="lbl">止损</span>
+        <input class="mono" type="number" name="stop_pct" value="0.5" step="0.1" min="0.01"><span class="lbl">%</span></label>
+      <label class="chip"><span class="lbl">止盈</span>
+        <input class="mono" type="number" name="target_pct" value="1.0" step="0.1" min="0.01"><span class="lbl">%</span></label>
+      <label class="chip"><span class="lbl">单边成本</span>
+        <input class="mono" type="number" name="cost_bps" value="0" step="0.5" min="0"><span class="lbl">bp</span></label>
+      <label class="chip"><input type="checkbox" name="entry_on_next_open" checked><span class="lbl">次根开盘入场</span></label>
+      <button type="submit">重算</button>
+      <span class="spacer"></span>
+      <span class="lbl">同根同时触及止损止盈记止损 · 成本双边 · neutral 不进胜率</span>
+    </form>
+    <div class="stats-grid">
+      <div class="stats-col left">
+        <div id="heroes" class="heroes"></div>
+        <div>
+          <div class="sec-title"><b>退出原因</b><span id="exit-sub" class="lbl"></span></div>
+          <svg id="exit-bar" viewBox="0 0 660 28" width="100%" height="28" preserveAspectRatio="none"></svg>
+          <div id="exit-legend" class="legend"></div>
+        </div>
+        <div>
+          <div class="sec-title"><b>价格走到了哪里 · 与止损止盈距离对比</b></div>
+          <div id="excursion"></div>
+          <div id="exc-note" class="callout"></div>
+        </div>
+      </div>
+      <div class="stats-col">
+        <div>
+          <div class="sec-title"><b>分时段触发次数</b><span class="lbl">市场本地时间</span></div>
+          <div id="hour-warn" class="lbl warn" style="margin-bottom:10px"></div>
+          <div class="hours">
+            <svg id="hour-chart" viewBox="0 0 660 128" width="100%" height="128"></svg>
+            <div id="hour-tip" class="tip"></div>
+          </div>
+        </div>
+        <div><div class="sec-title"><b>分品种</b></div><div id="t-symbol"></div></div>
+        <div><div class="sec-title"><b>分规则</b></div><div id="t-rule"></div></div>
+        <div><div class="sec-title"><b>分方向</b></div><div id="t-direction"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 纸上账户 ───────────────────────────────── -->
+  <section id="view-trade" class="view">
+    <div class="scroll">
+      <div class="ops">
+        <div id="trade-banner"></div>
+        <div><div class="sec-title"><b>当前持仓</b><span class="lbl">浮动盈亏按最新一根收盘价</span></div>
+          <div id="trade-positions"></div></div>
+        <div><div class="sec-title"><b>成交流水</b><span id="fill-count" class="lbl"></span></div>
+          <div id="trade-fills"></div></div>
+        <div><div class="sec-title"><b>被风控拒掉的单</b>
+          <span class="lbl">只留最近 20 条</span></div>
+          <div id="trade-rejects"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 运行健康 ───────────────────────────────── -->
+  <section id="view-ops" class="view">
+    <div class="scroll">
+      <div class="ops">
+        <div id="ops-banner"></div>
+        <div><div class="sec-title"><b>数据流</b></div><div id="ops-feeds" class="feeds"></div></div>
+        <div>
+          <div class="sec-title"><b>标的数据连续性</b><span class="lbl">最近 6 小时</span>
+            <span class="spacer"></span><div id="tl-legend" class="legend"></div></div>
+          <div id="ops-timeline"></div>
+        </div>
+        <div><div class="sec-title"><b>已加载规则</b></div><div id="ops-rules"></div></div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div id="toasts" class="toasts"></div>
+
+<script src="/static/vendor/lightweight-charts.standalone.production.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

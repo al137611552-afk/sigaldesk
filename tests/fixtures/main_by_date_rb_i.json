@@ -1,0 +1,82 @@
+{
+    "code": 0,
+    "data": [
+        {
+            "main_variety_code": "i9999",
+            "variety_code": "i2505",
+            "variety_name": "\u94c1\u77ff\u77f32505",
+            "start_date": "2025-01-01 00:00:00",
+            "end_date": "2025-04-07 00:00:00"
+        },
+        {
+            "main_variety_code": "i9999",
+            "variety_code": "i2509",
+            "variety_name": "\u94c1\u77ff\u77f32509",
+            "start_date": "2025-04-08 00:00:00",
+            "end_date": "2025-08-11 00:00:00"
+        },
+        {
+            "main_variety_code": "i9999",
+            "variety_code": "i2601",
+            "variety_name": "\u94c1\u77ff\u77f32601",
+            "start_date": "2025-08-12 00:00:00",
+            "end_date": "2025-12-08 00:00:00"
+        },
+        {
+            "main_variety_code": "i9999",
+            "variety_code": "i2605",
+            "variety_name": "\u94c1\u77ff\u77f32605",
+            "start_date": "2025-12-09 00:00:00",
+            "end_date": "2026-04-08 00:00:00"
+        },
+        {
+            "main_variety_code": "i9999",
+            "variety_code": "i2609",
+            "variety_name": "\u94c1\u77ff\u77f32609",
+            "start_date": "2026-04-09 00:00:00",
+            "end_date": "2026-08-12 00:00:00"
+        },
+        {
+            "main_variety_code": "i9999",
+            "variety_code": "i2701",
+            "variety_name": "\u94c1\u77ff\u77f32701",
+            "start_date": "2026-08-13 00:00:00",
+            "end_date": "2026-08-31 00:00:00"
+        },
+        {
+            "main_variety_code": "rb9999",
+            "variety_code": "rb2505",
+            "variety_name": "\u87ba\u7eb9\u94a22505",
+            "start_date": "2025-01-01 00:00:00",
+            "end_date": "2025-04-07 00:00:00"
+        },
+        {
+            "main_variety_code": "rb9999",
+            "variety_code": "rb2510",
+            "variety_name": "\u87ba\u7eb9\u94a22510",
+            "start_date": "2025-04-08 00:00:00",
+            "end_date": "2025-08-29 00:00:00"
+        },
+        {
+            "main_variety_code": "rb9999",
+            "variety_code": "rb2601",
+            "variety_name": "\u87ba\u7eb9\u94a22601",
+            "start_date": "2025-08-30 00:00:00",
+            "end_date": "2025-12-02 00:00:00"
+        },
+        {
+            "main_variety_code": "rb9999",
+            "variety_code": "rb2605",
+            "variety_name": "\u87ba\u7eb9\u94a22605",
+            "start_date": "2025-12-03 00:00:00",
+            "end_date": "2026-04-07 00:00:00"
+        },
+        {
+            "main_variety_code": "rb9999",
+            "variety_code": "rb2610",
+            "variety_name": "\u87ba\u7eb9\u94a22610",
+            "start_date": "2026-04-08 00:00:00",
+            "end_date": "2026-08-31 00:00:00"
+        }
+    ]
+}

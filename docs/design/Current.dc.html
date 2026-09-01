@@ -1,0 +1,159 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body{margin:0;background:#0e1116;color:#e6edf3;
+      font:14px/1.5 system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+    *{box-sizing:border-box}
+    a{color:#58a6ff} a:hover{color:#79bbff}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  </style>
+</helmet>
+
+<div style="width:1440px;height:900px;display:flex;flex-direction:column;overflow:hidden">
+
+  <div style="display:flex;align-items:center;gap:16px;padding:10px 16px;border-bottom:1px solid #262c36">
+    <h1 style="font-size:16px;margin:0;letter-spacing:.5px">Signal Desk</h1>
+    <div style="display:flex;gap:8px;margin-left:auto">
+      <span style="padding:2px 10px;border:1px solid #26a69a;border-radius:999px;font-size:12px;color:#26a69a">实时 · 已连接</span>
+      <span style="padding:2px 10px;border:1px solid #26a69a;border-radius:999px;font-size:12px;color:#26a69a">健康：正常</span>
+      <span class="mono" style="padding:2px 10px;border:1px solid #262c36;border-radius:999px;font-size:12px;color:#8b949e">01:42:07Z</span>
+    </div>
+  </div>
+
+  <div style="display:flex;gap:4px;padding:8px 16px 0;border-bottom:1px solid #262c36">
+    <div style="color:#e6edf3;padding:8px 14px;border-bottom:2px solid #58a6ff;font-size:13px">信号与图表</div>
+    <div style="color:#8b949e;padding:8px 14px;border-bottom:2px solid transparent;font-size:13px">质量统计</div>
+    <div style="color:#8b949e;padding:8px 14px;border-bottom:2px solid transparent;font-size:13px">运行健康</div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:340px 1fr;flex:1;min-height:0">
+
+    <div style="border-right:1px solid #262c36;display:flex;flex-direction:column;min-height:0">
+      <div style="display:flex;gap:6px;padding:10px">
+        <div style="flex:1;background:#161b22;border:1px solid #262c36;border-radius:6px;padding:5px 8px;font-size:12px;color:#e6edf3">全部规则</div>
+        <div style="flex:1;background:#161b22;border:1px solid #262c36;border-radius:6px;padding:5px 8px;font-size:12px;color:#e6edf3">全部标的</div>
+      </div>
+      <div style="flex:1;overflow:hidden">
+        <sc-for list="{{signals}}" as="s" hint-placeholder-count="6">
+          <div style="padding:8px 12px;border-bottom:1px solid #262c36;background:{{s.bg}}">
+            <div style="display:flex;gap:8px;align-items:baseline">
+              <span style="font-weight:600;color:{{s.color}}">{{s.dir}}</span>
+              <span class="mono" style="font-size:12px">{{s.sym}}</span>
+              <span class="mono" style="margin-left:auto;color:#8b949e;font-size:11px">{{s.time}}</span>
+            </div>
+            <div style="color:#8b949e;font-size:11px;margin-top:2px">{{s.rule}}</div>
+            <div class="mono" style="color:#8b949e;font-size:11px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{s.ctx}}</div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;min-width:0">
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid #262c36">
+        <span class="mono" style="font-size:14px">OKX.BTCUSDT.PERP · 5m</span>
+        <span style="flex:1"></span>
+        <div style="background:#161b22;border:1px solid #262c36;border-radius:6px;padding:5px 8px;font-size:12px">BTCUSDT.PERP</div>
+        <div style="display:flex;gap:2px">
+          <sc-for list="{{tfs}}" as="t" hint-placeholder-count="6">
+            <div style="padding:3px 9px;border:1px solid {{t.border}};background:#161b22;color:{{t.color}};border-radius:5px;font-size:11px">{{t.name}}</div>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="flex:1;position:relative;background:#0e1116;min-height:0">
+        <svg viewBox="0 0 1080 470" width="100%" height="100%" preserveAspectRatio="none">
+          <g stroke="#1b2028" stroke-width="1">
+            <sc-for list="{{hlines}}" as="l" hint-placeholder-count="5">
+              <line x1="0" y1="{{l.y}}" x2="1010" y2="{{l.y}}"></line>
+            </sc-for>
+          </g>
+          <sc-for list="{{candles}}" as="c" hint-placeholder-count="10">
+            <g>
+              <line x1="{{c.cx}}" y1="{{c.hy}}" x2="{{c.cx}}" y2="{{c.ly}}" stroke="{{c.color}}" stroke-width="1"></line>
+              <rect x="{{c.x}}" y="{{c.by}}" width="9" height="{{c.bh}}" fill="{{c.color}}"></rect>
+            </g>
+          </sc-for>
+          <sc-for list="{{marks}}" as="m" hint-placeholder-count="3">
+            <polygon points="{{m.pts}}" fill="#26a69a"></polygon>
+          </sc-for>
+          <g fill="#8b949e" font-size="10" font-family="ui-monospace,monospace">
+            <sc-for list="{{hlines}}" as="l" hint-placeholder-count="5">
+              <text x="1016" y="{{l.ty}}">{{l.label}}</text>
+            </sc-for>
+          </g>
+        </svg>
+      </div>
+
+      <div style="color:#8b949e;font-size:12px;padding:8px 14px">1200 根（显示最近 240 根）　08-31 00:02 UTC → 08-31 01:42 UTC　标注 21/21 条</div>
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script>
+class Component extends DCLogic {
+  renderVals() {
+    const rows = [
+      ['▲ 多', '#26a69a', 'OKX.BTCUSDT.PERP', '01:42 UTC', 'multi-level-verify @ 77,943.1',
+       'atr14=47.11  trend.ema5=77887.4  setup.rsi6=50.79', '#1b2230'],
+      ['▲ 多', '#26a69a', 'OKX.ETHUSDT.PERP', '01:31 UTC', 'multi-level-verify @ 2,430.82',
+       'atr14=2.38  trend.ema5=2429.32  setup.rsi6=50.47', 'transparent'],
+      ['▲ 多', '#26a69a', 'OKX.BTCUSDT.PERP', '01:31 UTC', 'multi-level-verify @ 77,990.4',
+       'atr14=53.80  trend.ema5=77880.4  setup.rsi6=57.05', 'transparent'],
+      ['▲ 多', '#26a69a', 'OKX.ETHUSDT.PERP', '00:58 UTC', 'multi-level-verify @ 2,421.05',
+       'atr14=2.71  trend.ema5=2418.90  setup.rsi6=44.12', 'transparent'],
+      ['▲ 多', '#26a69a', 'OKX.BTCUSDT.PERP', '00:47 UTC', 'multi-level-verify @ 77,612.0',
+       'atr14=61.44  trend.ema5=77540.2  setup.rsi6=38.90', 'transparent'],
+      ['▲ 多', '#26a69a', 'OKX.ETHUSDT.PERP', '00:24 UTC', 'multi-level-verify @ 2,412.66',
+       'atr14=3.02  trend.ema5=2410.11  setup.rsi6=51.33', 'transparent'],
+      ['▲ 多', '#26a69a', 'OKX.BTCUSDT.PERP', '00:11 UTC', 'multi-level-verify @ 77,401.5',
+       'atr14=58.19  trend.ema5=77350.8  setup.rsi6=47.62', 'transparent'],
+    ];
+    const signals = rows.map(([dir, color, sym, time, rule, ctx, bg]) =>
+      ({ dir, color, sym, time, rule, ctx, bg }));
+
+    const tfs = ['1m', '5m', '15m', '30m', '1h', '4h'].map((name) => ({
+      name, color: name === '5m' ? '#e6edf3' : '#8b949e',
+      border: name === '5m' ? '#58a6ff' : '#262c36',
+    }));
+
+    let seed = 7;
+    const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    const candles = [];
+    let px = 77400;
+    const lo = 77200, hi = 78100, top = 24, bot = 430;
+    const toY = (p) => bot - ((p - lo) / (hi - lo)) * (bot - top);
+    for (let i = 0; i < 84; i++) {
+      const o = px;
+      px = o + (rnd() - 0.47) * 90;
+      const c = px;
+      const h = Math.max(o, c) + rnd() * 34;
+      const l = Math.min(o, c) - rnd() * 34;
+      const x = 8 + i * 12;
+      candles.push({
+        x, cx: x + 4.5, hy: toY(h), ly: toY(l),
+        by: toY(Math.max(o, c)), bh: Math.max(1.5, Math.abs(toY(o) - toY(c))),
+        color: c >= o ? '#26a69a' : '#ef5350', close: c, i,
+      });
+    }
+    const marks = [18, 41, 63].map((i) => {
+      const c = candles[i];
+      const y = c.ly + 12;
+      return { pts: `${c.cx - 5},${y + 9} ${c.cx + 5},${y + 9} ${c.cx},${y}` };
+    });
+    const hlines = [77300, 77500, 77700, 77900, 78100].map((p) => ({
+      y: toY(p), ty: toY(p) + 3, label: p.toLocaleString(),
+    }));
+    return { signals, tfs, candles, marks, hlines };
+  }
+}
+</script>
+</body>
+</html>

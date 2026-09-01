@@ -1,0 +1,301 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body{margin:0;background:#0e1116;color:#e6edf3;
+      font:14px/1.5 system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+    *{box-sizing:border-box}
+    a{color:#58a6ff} a:hover{color:#79bbff}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+      font-variant-numeric:tabular-nums}
+    .lbl{color:#8b949e;font-size:11px;letter-spacing:.3px}
+  </style>
+</helmet>
+
+<div style="width:1440px;height:900px;display:flex;flex-direction:column;overflow:hidden">
+
+  <!-- 顶栏 -->
+  <div style="display:flex;align-items:center;gap:16px;padding:10px 16px;border-bottom:1px solid #262c36">
+    <h1 style="font-size:16px;margin:0;letter-spacing:.5px">Signal Desk</h1>
+    <div style="display:flex;gap:8px;margin-left:auto;align-items:center">
+      <span style="display:flex;align-items:center;gap:6px;padding:2px 10px;border:1px solid #26a69a;border-radius:999px;font-size:12px;color:#26a69a">
+        <svg width="7" height="7" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3.2" fill="#26a69a"></circle></svg>实时
+      </span>
+      <span class="mono" style="padding:2px 10px;border:1px solid #262c36;border-radius:999px;font-size:12px;color:#8b949e">2 路数据流 · 0 缺口</span>
+      <span class="mono" style="font-size:12px;color:#8b949e">01:42:07Z</span>
+    </div>
+  </div>
+
+  <!-- 标签页 -->
+  <div style="display:flex;gap:4px;padding:8px 16px 0;border-bottom:1px solid #262c36">
+    <div style="color:#e6edf3;padding:8px 14px;border-bottom:2px solid {{accent}};font-size:13px">盯盘</div>
+    <div style="color:#8b949e;padding:8px 14px;border-bottom:2px solid transparent;font-size:13px">质量统计</div>
+    <div style="color:#8b949e;padding:8px 14px;border-bottom:2px solid transparent;font-size:13px">运行健康</div>
+  </div>
+
+  <!-- 链路状态条：本设计新增。引擎知道"正在酝酿什么"，旧版只显示"已经发生了什么"。 -->
+  <div style="padding:12px 16px 14px;border-bottom:1px solid #262c36">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:9px">
+      <span class="lbl" style="color:#e6edf3;font-size:12px;font-weight:600">规则链路状态</span>
+      <span class="lbl">4 个标的 · 1 条规则 · 2 个已布防</span>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(4, minmax(0, 1fr));gap:12px">
+      <sc-for list="{{chains}}" as="ch" hint-placeholder-count="4">
+        <div style="background:#161b22;border:1px solid {{ch.border}};border-radius:8px;padding:10px 12px">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:9px">
+            <span class="mono" style="font-size:12px">{{ch.sym}}</span>
+            <span style="margin-left:auto;display:flex;align-items:center;gap:5px;font-size:11px;color:{{ch.tone}}">
+              <svg width="7" height="7" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3.2" fill="{{ch.tone}}"></circle></svg>{{ch.phase}}
+            </span>
+          </div>
+          <div style="display:flex;align-items:center;gap:0">
+            <sc-for list="{{ch.steps}}" as="st" hint-placeholder-count="3">
+              <div style="flex:1;display:flex;flex-direction:column;gap:4px">
+                <div style="display:flex;align-items:center;gap:0">
+                  <div style="height:2px;flex:1;background:{{st.leftBar}}"></div>
+                  <svg width="11" height="11" viewBox="0 0 12 12" style="flex:none">
+                    <circle cx="6" cy="6" r="5" fill="{{st.fill}}" stroke="{{st.stroke}}" stroke-width="1.5"></circle>
+                  </svg>
+                  <div style="height:2px;flex:1;background:{{st.rightBar}}"></div>
+                </div>
+                <div style="text-align:center;font-size:10px;color:{{st.labelColor}};line-height:1.3">{{st.role}}<br><span class="mono" style="color:#8b949e">{{st.at}}</span></div>
+              </div>
+            </sc-for>
+          </div>
+          <div class="mono" style="margin-top:8px;font-size:10px;color:#8b949e">{{ch.note}}</div>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <!-- 主体 -->
+  <div style="display:grid;grid-template-columns:1fr 372px;flex:1;min-height:0">
+
+    <!-- 图表 -->
+    <div style="display:flex;flex-direction:column;min-width:0;border-right:1px solid #262c36">
+      <div style="display:flex;align-items:center;gap:14px;padding:9px 14px;border-bottom:1px solid #262c36">
+        <span class="mono" style="font-size:14px">BTC-USDT-SWAP</span>
+        <div style="display:flex;gap:14px" class="mono">
+          <span style="font-size:12px"><span class="lbl">O</span> 77,930.2</span>
+          <span style="font-size:12px"><span class="lbl">H</span> 77,988.6</span>
+          <span style="font-size:12px"><span class="lbl">L</span> 77,901.4</span>
+          <span style="font-size:12px;color:#26a69a"><span class="lbl">C</span> 77,943.1</span>
+          <span style="font-size:12px"><span class="lbl">量</span> 30.79</span>
+        </div>
+        <span style="flex:1"></span>
+        <div style="display:flex;gap:2px">
+          <sc-for list="{{tfs}}" as="t" hint-placeholder-count="6">
+            <div style="padding:3px 9px;border:1px solid {{t.border}};background:#161b22;color:{{t.color}};border-radius:5px;font-size:11px">{{t.name}}</div>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="flex:1;min-height:0;position:relative">
+        <svg viewBox="0 0 1060 400" width="100%" height="100%" preserveAspectRatio="none">
+          <g stroke="#1b2028" stroke-width="1">
+            <sc-for list="{{hlines}}" as="l" hint-placeholder-count="5">
+              <line x1="0" y1="{{l.y}}" x2="985" y2="{{l.y}}"></line>
+            </sc-for>
+          </g>
+          <sc-for list="{{candles}}" as="c" hint-placeholder-count="10">
+            <g>
+              <line x1="{{c.cx}}" y1="{{c.hy}}" x2="{{c.cx}}" y2="{{c.ly}}" stroke="{{c.color}}" stroke-width="1"></line>
+              <rect x="{{c.x}}" y="{{c.by}}" width="8" height="{{c.bh}}" fill="{{c.color}}"></rect>
+            </g>
+          </sc-for>
+          <sc-for list="{{marks}}" as="m" hint-placeholder-count="3">
+            <g>
+              <polygon points="{{m.pts}}" fill="#26a69a"></polygon>
+              <line x1="{{m.x}}" y1="0" x2="{{m.x}}" y2="400" stroke="#26a69a" stroke-width="1" stroke-dasharray="2 4" opacity="0.28"></line>
+            </g>
+          </sc-for>
+          <g fill="#8b949e" font-size="10" font-family="ui-monospace,monospace">
+            <sc-for list="{{hlines}}" as="l" hint-placeholder-count="5">
+              <text x="991" y="{{l.ty}}">{{l.label}}</text>
+            </sc-for>
+          </g>
+        </svg>
+      </div>
+
+      <!-- 级别带：把"多周期"真正画出来。数据就是引擎的条件日志。 -->
+      <div style="border-top:1px solid #262c36;padding:9px 14px 11px">
+        <div class="lbl" style="margin-bottom:6px">各级别条件成立区间</div>
+        <sc-for list="{{ribbon}}" as="r" hint-placeholder-count="3">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:5px">
+            <span class="mono" style="width:74px;font-size:11px;color:#8b949e;flex:none">{{r.label}}</span>
+            <svg viewBox="0 0 1000 10" width="100%" height="10" preserveAspectRatio="none" style="flex:1">
+              <rect x="0" y="2" width="1000" height="6" rx="3" fill="#1b2028"></rect>
+              <sc-for list="{{r.spans}}" as="sp" hint-placeholder-count="3">
+                <rect x="{{sp.x}}" y="2" width="{{sp.w}}" height="6" rx="3" fill="{{sp.fill}}"></rect>
+              </sc-for>
+            </svg>
+            <span class="mono" style="width:52px;text-align:right;font-size:11px;color:{{r.nowColor}};flex:none">{{r.now}}</span>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <!-- 信号流 -->
+    <div style="display:flex;flex-direction:column;min-height:0">
+      <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid #262c36">
+        <span style="font-size:13px;font-weight:600">信号流</span>
+        <span class="lbl">43 条</span>
+        <span style="flex:1"></span>
+        <div style="display:flex;gap:6px">
+          <div style="background:#161b22;border:1px solid #262c36;border-radius:6px;padding:4px 8px;font-size:11px;color:#8b949e">全部规则</div>
+          <div style="background:#161b22;border:1px solid #262c36;border-radius:6px;padding:4px 8px;font-size:11px;color:#8b949e">全部标的</div>
+        </div>
+      </div>
+
+      <!-- 选中的信号：展开成"为什么触发"，逐级别给证据 -->
+      <div style="border-bottom:1px solid #262c36;border-left:2px solid {{accent}};background:#121720;padding:11px 12px 12px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <svg width="12" height="11" viewBox="0 0 12 11" style="flex:none"><polygon points="6,0 12,11 0,11" fill="#26a69a"></polygon></svg>
+          <span class="mono" style="font-size:13px">BTCUSDT.PERP</span>
+          <span class="mono" style="margin-left:auto;font-size:15px;color:#26a69a">77,943.1</span>
+        </div>
+        <div style="display:flex;align-items:baseline;gap:8px;margin-top:3px">
+          <span style="font-size:11px;color:#8b949e">multi-level-verify</span>
+          <span class="mono" style="margin-left:auto;font-size:11px;color:#8b949e">08-31 01:42 UTC</span>
+        </div>
+        <div style="height:1px;background:#262c36;margin:10px 0 9px"></div>
+        <sc-for list="{{evidence}}" as="e" hint-placeholder-count="3">
+          <div style="display:grid;grid-template-columns:58px 1fr auto;gap:8px;align-items:baseline;margin-bottom:6px">
+            <span class="mono" style="font-size:11px;color:#8b949e">{{e.role}}</span>
+            <span class="mono" style="font-size:11px">{{e.detail}}</span>
+            <span class="mono" style="font-size:11px;color:#8b949e">{{e.at}}</span>
+          </div>
+        </sc-for>
+        <div style="display:flex;gap:16px;margin-top:9px;padding-top:9px;border-top:1px solid #262c36">
+          <span class="mono" style="font-size:11px"><span class="lbl">ATR14 </span>47.11</span>
+          <span class="mono" style="font-size:11px"><span class="lbl">量 </span>30.79</span>
+          <span class="mono" style="font-size:11px"><span class="lbl">去重键 </span>…:1788138120</span>
+        </div>
+      </div>
+
+      <!-- 其余信号：两行紧凑，只留能一眼扫的东西 -->
+      <div style="flex:1;overflow:hidden">
+        <sc-for list="{{feed}}" as="s" hint-placeholder-count="8">
+          <div style="padding:8px 12px;border-bottom:1px solid #262c36;display:flex;align-items:center;gap:9px">
+            <svg width="10" height="9" viewBox="0 0 12 11" style="flex:none"><polygon points="6,0 12,11 0,11" fill="#26a69a"></polygon></svg>
+            <div style="min-width:0;flex:1">
+              <div style="display:flex;gap:8px;align-items:baseline">
+                <span class="mono" style="font-size:12px">{{s.sym}}</span>
+                <span class="mono" style="margin-left:auto;font-size:12px">{{s.price}}</span>
+              </div>
+              <div style="display:flex;gap:8px;align-items:baseline;margin-top:1px">
+                <span style="font-size:10px;color:#8b949e">{{s.rule}}</span>
+                <span class="mono" style="margin-left:auto;font-size:10px;color:#8b949e">{{s.time}}</span>
+              </div>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{"accent":{"editor":"color","default":"#58a6ff","options":["#58a6ff","#d29922","#26a69a","#a371f7"],"section":"主题"}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const accent = this.props.accent ?? '#58a6ff';
+    const UP = '#26a69a', DIM = '#8b949e', LINE = '#262c36', WARN = '#d29922';
+
+    const step = (role, at, state) => ({
+      role, at,
+      fill: state === 'done' ? UP : state === 'wait' ? '#0e1116' : '#0e1116',
+      stroke: state === 'done' ? UP : state === 'wait' ? WARN : LINE,
+      labelColor: state === 'idle' ? DIM : '#e6edf3',
+      leftBar: state === 'done' ? UP : LINE,
+      rightBar: state === 'done' ? UP : LINE,
+    });
+
+    const chains = [
+      { sym: 'BTCUSDT.PERP', phase: '已布防', tone: WARN, border: WARN,
+        steps: [step('趋势 15m', '01:30', 'done'), step('回调 5m', '01:40', 'done'),
+                step('扳机 1m', '等待中', 'wait')],
+        note: 'TTL 4/6 根 · 布防于 01:40' },
+      { sym: 'ETHUSDT.PERP', phase: '已布防', tone: WARN, border: WARN,
+        steps: [step('趋势 15m', '01:15', 'done'), step('回调 5m', '01:35', 'done'),
+                step('扳机 1m', '等待中', 'wait')],
+        note: 'TTL 2/6 根 · 布防于 01:38' },
+      { sym: 'rb2610', phase: '冷却中', tone: DIM, border: LINE,
+        steps: [step('趋势 15m', '21:20', 'done'), step('回调 5m', '—', 'idle'),
+                step('扳机 1m', '—', 'idle')],
+        note: '上次触发 21:44 · 剩余 3m12s' },
+      { sym: 'au2610', phase: '空闲', tone: DIM, border: LINE,
+        steps: [step('趋势 15m', '—', 'idle'), step('回调 5m', '—', 'idle'),
+                step('扳机 1m', '—', 'idle')],
+        note: '趋势未成立 · 15m 收在 ema5 之下' },
+    ];
+
+    const tfs = ['1m', '5m', '15m', '30m', '1h', '4h'].map((name) => ({
+      name, color: name === '5m' ? '#e6edf3' : DIM,
+      border: name === '5m' ? accent : LINE,
+    }));
+
+    let seed = 7;
+    const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    const candles = [];
+    let px = 77400;
+    const lo = 77220, hi = 78060, top = 20, bot = 372;
+    const toY = (p) => bot - ((p - lo) / (hi - lo)) * (bot - top);
+    for (let i = 0; i < 82; i++) {
+      const o = px;
+      px = o + (rnd() - 0.47) * 90;
+      const c = px;
+      const h = Math.max(o, c) + rnd() * 32;
+      const l = Math.min(o, c) - rnd() * 32;
+      const x = 8 + i * 12;
+      candles.push({ x, cx: x + 4, hy: toY(h), ly: toY(l),
+        by: toY(Math.max(o, c)), bh: Math.max(1.5, Math.abs(toY(o) - toY(c))),
+        color: c >= o ? UP : '#ef5350' });
+    }
+    const marks = [22, 47, 70].map((i) => {
+      const c = candles[i], y = c.ly + 11;
+      return { x: c.cx, pts: `${c.cx - 5},${y + 9} ${c.cx + 5},${y + 9} ${c.cx},${y}` };
+    });
+    const hlines = [77300, 77500, 77700, 77900, 78100].map((p) => ({
+      y: toY(p), ty: toY(p) + 3, label: p.toLocaleString(),
+    }));
+
+    const band = (fill, ranges) => ranges.map(([a, b]) => ({ x: a, w: b - a, fill }));
+    const ribbon = [
+      { label: '趋势 15m', now: '成立', nowColor: UP,
+        spans: band('#26a69a', [[60, 330], [430, 1000]]) },
+      { label: '回调 5m', now: '成立', nowColor: UP,
+        spans: band('#26a69a', [[120, 260], [470, 620], [780, 1000]]) },
+      { label: '扳机 1m', now: '等待', nowColor: WARN,
+        spans: band('#58a6ff', [[258, 266], [612, 620], [842, 850]]) },
+    ];
+
+    const evidence = [
+      { role: '趋势 15m', detail: 'close 77,943 > ema5 77,887', at: '01:30' },
+      { role: '回调 5m', detail: 'rsi6 50.79 < 60（窗口内第 2/4 根）', at: '01:40' },
+      { role: '扳机 1m', detail: 'close 上穿 ema10 77,921', at: '01:42' },
+    ];
+
+    const feed = [
+      ['ETHUSDT.PERP', '2,430.82', 'multi-level-verify', '01:31 UTC'],
+      ['BTCUSDT.PERP', '77,990.4', 'multi-level-verify', '01:31 UTC'],
+      ['ETHUSDT.PERP', '2,421.05', 'multi-level-verify', '00:58 UTC'],
+      ['BTCUSDT.PERP', '77,612.0', 'multi-level-verify', '00:47 UTC'],
+      ['ETHUSDT.PERP', '2,412.66', 'multi-level-verify', '00:24 UTC'],
+      ['BTCUSDT.PERP', '77,401.5', 'multi-level-verify', '00:11 UTC'],
+      ['ETHUSDT.PERP', '2,398.14', 'multi-level-verify', '23:52 UTC'],
+      ['BTCUSDT.PERP', '77,180.9', 'multi-level-verify', '23:40 UTC'],
+    ].map(([sym, price, rule, time]) => ({ sym, price, rule, time }));
+
+    return { accent, chains, tfs, candles, marks, hlines, ribbon, evidence, feed };
+  }
+}
+</script>
+</body>
+</html>

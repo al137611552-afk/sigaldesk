@@ -1,0 +1,227 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body{margin:0;background:#0e1116;color:#e6edf3;
+      font:14px/1.5 system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+    *{box-sizing:border-box}
+    a{color:#58a6ff} a:hover{color:#79bbff}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+      font-variant-numeric:tabular-nums}
+    .lbl{color:#8b949e;font-size:11px;letter-spacing:.3px}
+    th,td{text-align:right;padding:5px 8px;border-bottom:1px solid #262c36;font-size:12px;
+      font-variant-numeric:tabular-nums}
+    th:first-child,td:first-child{text-align:left}
+    th{color:#8b949e;font-weight:500}
+    table{width:100%;border-collapse:collapse}
+  </style>
+</helmet>
+
+<div style="width:1440px;height:900px;display:flex;flex-direction:column;overflow:hidden">
+
+  <div style="display:flex;align-items:center;gap:16px;padding:10px 16px;border-bottom:1px solid #262c36">
+    <h1 style="font-size:16px;margin:0;letter-spacing:.5px">Signal Desk</h1>
+    <span class="mono" style="font-size:12px;color:#8b949e;margin-left:auto">01:42:07Z</span>
+  </div>
+  <div style="display:flex;gap:4px;padding:8px 16px 0;border-bottom:1px solid #262c36">
+    <div style="color:#8b949e;padding:8px 14px;border-bottom:2px solid transparent;font-size:13px">盯盘</div>
+    <div style="color:#e6edf3;padding:8px 14px;border-bottom:2px solid #58a6ff;font-size:13px">质量统计</div>
+    <div style="color:#8b949e;padding:8px 14px;border-bottom:2px solid transparent;font-size:13px">运行健康</div>
+  </div>
+
+  <div style="display:flex;align-items:center;gap:10px;padding:11px 16px;background:#121720;border-bottom:1px solid #262c36">
+    <span class="lbl" style="color:#e6edf3;font-weight:600">统计口径</span>
+    <sc-for list="{{params}}" as="p" hint-placeholder-count="5">
+      <div style="display:flex;align-items:baseline;gap:6px;background:#161b22;border:1px solid #262c36;border-radius:6px;padding:4px 10px">
+        <span class="lbl">{{p.k}}</span>
+        <span class="mono" style="font-size:12px">{{p.v}}</span>
+      </div>
+    </sc-for>
+    <span style="flex:1"></span>
+    <span class="lbl">入场取信号次根开盘价 · 同根同时触及记止损 · 成本双边</span>
+  </div>
+
+  <div style="flex:1;min-height:0;display:grid;grid-template-columns:1fr 1fr">
+
+    <div style="padding:16px;border-right:1px solid #262c36;display:flex;flex-direction:column;gap:15px;min-height:0">
+      <div style="display:grid;grid-template-columns:repeat(4, minmax(0, 1fr));gap:12px">
+        <sc-for list="{{heroes}}" as="h" hint-placeholder-count="4">
+          <div style="background:#161b22;border:1px solid #262c36;border-radius:8px;padding:12px 14px">
+            <div class="lbl">{{h.k}}</div>
+            <div class="mono" style="font-size:23px;margin-top:3px;color:{{h.color}};line-height:1.15">{{h.v}}</div>
+            <div class="lbl" style="margin-top:3px">{{h.sub}}</div>
+          </div>
+        </sc-for>
+      </div>
+
+      <div>
+        <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:8px">
+          <span style="font-size:13px;font-weight:600">退出原因</span>
+          <span class="lbl">43 条信号是怎么结束的</span>
+        </div>
+        <svg viewBox="0 0 660 28" width="100%" height="28" preserveAspectRatio="none">
+          <sc-for list="{{exits}}" as="e" hint-placeholder-count="3">
+            <rect x="{{e.x}}" y="0" width="{{e.w}}" height="28" rx="4" fill="{{e.fill}}"></rect>
+          </sc-for>
+        </svg>
+        <div style="display:flex;gap:20px;margin-top:9px">
+          <sc-for list="{{exits}}" as="e" hint-placeholder-count="3">
+            <div style="display:flex;align-items:center;gap:7px">
+              <svg width="9" height="9" viewBox="0 0 10 10"><rect width="10" height="10" rx="2.5" fill="{{e.fill}}"></rect></svg>
+              <span style="font-size:12px">{{e.label}}</span>
+              <span class="mono" style="font-size:12px;color:#8b949e">{{e.pct}} · {{e.n}} 条</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="flex:1;min-height:0">
+        <div style="font-size:13px;font-weight:600;margin-bottom:12px">价格走到了哪里 · 与止损止盈距离对比</div>
+        <sc-for list="{{excursion}}" as="x" hint-placeholder-count="4">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:11px">
+            <span style="width:98px;flex:none;font-size:12px;color:{{x.labelColor}}">{{x.label}}</span>
+            <svg viewBox="0 0 460 14" width="100%" height="14" preserveAspectRatio="none" style="flex:1">
+              <line x1="230" y1="0" x2="230" y2="14" stroke="#262c36" stroke-width="1"></line>
+              <rect x="{{x.rx}}" y="3" width="{{x.rw}}" height="8" rx="4" fill="{{x.fill}}" opacity="{{x.opacity}}"></rect>
+            </svg>
+            <span class="mono" style="width:66px;text-align:right;flex:none;font-size:12px;color:{{x.valueColor}}">{{x.value}}</span>
+          </div>
+        </sc-for>
+        <div style="margin-top:8px;padding:10px 12px;background:#161b22;border-left:2px solid #d29922;border-radius:0 6px 6px 0">
+          <div style="font-size:12px;line-height:1.65">平均最大浮盈 <span class="mono">+0.239%</span> 只走到止盈距离的
+            <span class="mono">24%</span>，平均最大浮亏 <span class="mono">−0.172%</span> 也只走到止损的
+            <span class="mono">34%</span>。<span style="color:#8b949e">这与「86% 持有到期」是同一件事的两种说法。</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div style="padding:16px;display:flex;flex-direction:column;gap:16px;min-height:0">
+      <div>
+        <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:4px">
+          <span style="font-size:13px;font-weight:600">分时段触发次数</span>
+          <span class="lbl">市场本地时间</span>
+        </div>
+        <div class="lbl" style="margin-bottom:10px;color:#d29922">
+          样本量不足以分时段下结论 —— 最多的时段也只有 5 条
+        </div>
+        <div style="position:relative">
+          <svg viewBox="0 0 660 128" width="100%" height="128">
+            <g stroke="#1b2028" stroke-width="1">
+              <line x1="14" y1="100" x2="660" y2="100"></line>
+              <line x1="14" y1="60" x2="660" y2="60"></line>
+              <line x1="14" y1="20" x2="660" y2="20"></line>
+            </g>
+            <sc-for list="{{hours}}" as="h" hint-placeholder-count="8">
+              <g>
+                <rect x="{{h.x}}" y="{{h.y}}" width="30" height="{{h.h}}" rx="4" fill="#58a6ff" opacity="{{h.opacity}}"></rect>
+                <text x="{{h.tx}}" y="115" fill="#8b949e" font-size="9" text-anchor="middle" font-family="ui-monospace,monospace">{{h.label}}</text>
+                <text x="{{h.tx}}" y="{{h.vy}}" fill="#8b949e" font-size="9" text-anchor="middle" font-family="ui-monospace,monospace">{{h.n}}</text>
+              </g>
+            </sc-for>
+            <g fill="#8b949e" font-size="9" font-family="ui-monospace,monospace">
+              <text x="0" y="23">5</text><text x="0" y="63">3</text><text x="0" y="103">1</text>
+            </g>
+          </svg>
+          <div style="position:absolute;left:404px;top:0;background:#1b2230;border:1px solid #58a6ff;border-radius:6px;padding:7px 10px">
+            <div class="mono" style="font-size:11px">15:00 CST</div>
+            <div class="mono" style="font-size:11px;color:#8b949e;margin-top:2px">5 条 · 胜率 60% · 期望 +0.260%</div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div style="font-size:13px;font-weight:600;margin-bottom:8px">分品种</div>
+        <table>
+          <thead><tr><th>标的</th><th>触发</th><th>胜率</th><th>期望</th><th>盈亏比</th><th>假信号率</th></tr></thead>
+          <tbody>
+            <sc-for list="{{bySymbol}}" as="r" hint-placeholder-count="2">
+              <tr>
+                <td class="mono">{{r.k}}</td><td>{{r.n}}</td><td>{{r.win}}</td>
+                <td style="color:{{r.color}}">{{r.exp}}</td><td>{{r.payoff}}</td><td>{{r.fake}}</td>
+              </tr>
+            </sc-for>
+          </tbody>
+        </table>
+      </div>
+
+      <div>
+        <div style="font-size:13px;font-weight:600;margin-bottom:8px">分规则</div>
+        <table>
+          <thead><tr><th>规则</th><th>触发</th><th>胜率</th><th>期望</th><th>盈亏比</th><th>假信号率</th></tr></thead>
+          <tbody><tr>
+            <td class="mono">multi-level-verify</td><td>43</td><td>41.9%</td>
+            <td style="color:#ef5350">−0.017%</td><td>1.18</td><td>11.6%</td>
+          </tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script>
+class Component extends DCLogic {
+  renderVals() {
+    const UP = '#26a69a', DOWN = '#ef5350', DIM = '#8b949e', FG = '#e6edf3';
+    const params = [
+      { k: '持有期', v: '30 根' }, { k: '止损', v: '0.50%' }, { k: '止盈', v: '1.00%' },
+      { k: '单边成本', v: '2 bp' }, { k: '样本', v: '43 条' },
+    ];
+    const heroes = [
+      { k: '期望收益 / 条', v: '−0.017%', color: DOWN, sub: '中位 −0.023%' },
+      { k: '胜率', v: '41.9%', color: FG, sub: '18 胜 / 25 负' },
+      { k: '盈亏比', v: '1.18', color: FG, sub: '均盈 +0.239% / 均亏 −0.202%' },
+      { k: '平均持有', v: '28.0 根', color: FG, sub: '上限 30 根' },
+    ];
+    const parts = [
+      { label: '持有到期', n: 37, pct: '86.0%', fill: DIM },
+      { label: '触及止损', n: 5, pct: '11.6%', fill: DOWN },
+      { label: '触及止盈', n: 1, pct: '2.3%', fill: UP },
+    ];
+    let cursor = 0;
+    const exits = parts.map((p) => {
+      const full = (p.n / 43) * 660;
+      const seg = { ...p, x: cursor, w: Math.max(3, full - 2) };
+      cursor += full;
+      return seg;
+    });
+
+    const scale = 460 / 2.4;
+    const bar = (label, from, to, fill, opacity, value, strong) => {
+      const a = 230 + from * 100 * scale, b = 230 + to * 100 * scale;
+      return { label, rx: Math.min(a, b), rw: Math.max(3, Math.abs(b - a)), fill, opacity,
+        value, labelColor: strong ? FG : DIM, valueColor: strong ? fill : DIM };
+    };
+    const excursion = [
+      bar('止盈距离', 0, 0.010, UP, 0.22, '+1.000%', false),
+      bar('平均最大浮盈', 0, 0.00239, UP, 1, '+0.239%', true),
+      bar('平均最大浮亏', -0.00172, 0, DOWN, 1, '−0.172%', true),
+      bar('止损距离', -0.005, 0, DOWN, 0.22, '−0.500%', false),
+    ];
+
+    const raw = [['00',4],['01',1],['06',2],['07',1],['08',1],['09',1],['10',2],['11',5],
+                 ['12',4],['13',3],['14',4],['15',5],['16',3],['17',2],['18',2],['19',2],['22',1]];
+    const hours = raw.map(([label, n], i) => {
+      const h = (n / 5) * 80;
+      const bx = 22 + i * 37;
+      return { x: bx, tx: bx + 15, y: 100 - h, h: Math.max(4, h), n,
+        vy: 100 - h - 5, label, opacity: n >= 5 ? 1 : 0.45 };
+    });
+    const bySymbol = [
+      { k: 'OKX.BTCUSDT.PERP', n: 21, win: '47.6%', exp: '−0.004%', color: DOWN,
+        payoff: '1.31', fake: '9.5%' },
+      { k: 'OKX.ETHUSDT.PERP', n: 22, win: '36.4%', exp: '−0.031%', color: DOWN,
+        payoff: '1.06', fake: '13.6%' },
+    ];
+    return { params, heroes, exits, excursion, hours, bySymbol };
+  }
+}
+</script>
+</body>
+</html>

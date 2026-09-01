@@ -1,0 +1,54 @@
+[project]
+name = "sigdesk"
+version = "0.1.0"
+description = "多级别技术形态盯盘预警系统 —— 中国期货 + 加密货币"
+requires-python = ">=3.12"
+dependencies = [
+    "aiohttp>=3.9",
+    "pyarrow>=15",
+    "pyyaml>=6",
+    "fastapi>=0.115",   # 只读 Web 面板（M3）
+    "uvicorn>=0.30",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+    "mypy>=1.10",
+    "httpx2",           # starlette 的 TestClient 依赖它
+    "types-PyYAML",     # mypy strict 需要；漏声明会导致干净环境里 mypy 报 4 个错
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# 面板的静态资源不是 Python 模块，不声明的话正式打包会整个漏掉
+# （和之前缺 __init__.py 同一类问题）。
+[tool.setuptools.package-data]
+sigdesk = ["web/static/*", "web/static/vendor/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src"]
+
+[[tool.mypy.overrides]]
+module = ["pyarrow.*", "uvicorn.*"]
+ignore_missing_imports = true
