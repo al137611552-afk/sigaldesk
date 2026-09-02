@@ -33,6 +33,7 @@
 | `report.py` | 终端版信号质量报告 |
 | `paper_run.py` | 纸上回测 |
 | `acceptance.py` | 离线验收（不需要凭据、不联网）|
+| `make_package.py` | 打 Windows 测试包（装什么由 `git ls-files` 决定，所以 `.env`/数据库天然不进包）|
 | `crosscheck.py` / `crypto_live_check.py` / `replay_check.py` | 三个对拍验收 |
 
 ## 快速开始
