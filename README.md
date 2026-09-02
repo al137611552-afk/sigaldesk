@@ -8,6 +8,33 @@
 - 决策：[docs/adr/](docs/adr/) ｜ **开发须知与已知坑：[CLAUDE.md](CLAUDE.md)**
 - 在 Windows 上跑：[docs/RUN-WINDOWS.md](docs/RUN-WINDOWS.md)
 
+## 我该跑哪个
+
+`scripts/` 下有十几个文件，但**会长期运行的只有两个**，其余都是跑完就退的工具。
+
+| 想干什么 | 跑这个 |
+|---|---|
+| **日常盯盘**（采行情 + 跑规则 + 推送 + 面板） | `scripts/watch.py --web 127.0.0.1:8000` |
+| 已经有一个在盯了，只想再看一眼 | `scripts/serve.py`（**只读**，不采行情、不写任何东西）|
+| 首次装机 / 换了机器 | `scripts/setup_env.py` 配凭据 → `scripts/backfill.py` 回补历史 |
+
+**写者只能有一个**：状态机、去重表、冷却都在同一个 SQLite 里，跑两个 `watch.py`
+同一根 bar 会被判两次、重复报警。`watch.py` 启动时会检测并拒绝，
+但"想再看一眼"的正确做法始终是 `serve.py`。
+
+## 工具箱（一次性，跑完就退）
+
+| 脚本 | 干什么 |
+|---|---|
+| `setup_env.py` | 配凭据到用户级目录，**只配一次**；`--show` 查状态（不显示值）|
+| `pin_tls.py --write` | 抓 TLS 指纹并写回；证书轮换后重跑一次 |
+| `backfill.py` | 回补历史 1m 并聚合出高周期 |
+| `build_continuous.py` | 拼主连（派生序列，不随盘更新）|
+| `report.py` | 终端版信号质量报告 |
+| `paper_run.py` | 纸上回测 |
+| `acceptance.py` | 离线验收（不需要凭据、不联网）|
+| `crosscheck.py` / `crypto_live_check.py` / `replay_check.py` | 三个对拍验收 |
+
 ## 快速开始
 
 ```bash

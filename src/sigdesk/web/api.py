@@ -34,7 +34,7 @@ from ..rules.store import RuleStore, RuleStoreError, parse_source
 from ..rules.trial import run_trial
 from ..stats.outcome import OutcomeParams, evaluate_all
 from ..stats.report import build_report
-from ..store.parquet_io import read_range
+from ..store.parquet_io import latest_partition, read_range
 from ..store.runtime_store import RuntimeStore
 from .health import HealthMonitor
 from .intraday import build_intraday
@@ -195,6 +195,10 @@ def create_app(state: ServiceState) -> FastAPI:
         # 但列全了就要说清楚**哪些其实没在采集**：watch.py 只采集出现在某条规则
         # universe 里的标的。列表里有、却从没被任何规则盯过的，选中就是一张空图 ——
         # 不标出来的话，用户只会以为"期货连不上"（真发生过）。
+        # `watched` 只回答"有没有规则盯它"，**不回答"本地有没有数据"** —— 两件事。
+        # 冷启动时最误导人的正是这个差：规则盯着 BTC/ETH（watched=True），
+        # 但行情还没接入、一根 bar 都没落盘，下拉框里却干干净净什么标记都没有，
+        # 选中就是空图，看着像面板坏了（用户实际撞上了）。所以再给一个 last_day。
         watched = {uid for r in state.rules for uid in r.universe}
         symbols = []
         if state.registry:
@@ -207,6 +211,8 @@ def create_app(state: ServiceState) -> FastAPI:
                     "price_tick": s.price_tick,
                     "is_continuous": s.is_continuous,  # 前端要标出来，免得与可交易合约混淆
                     "watched": s.uid in watched,  # 有规则盯它 ⇒ 盯盘进程会采它的行情
+                    # 本地最后一个分区日；None = 一根 bar 都没有。只列目录名，不读文件。
+                    "last_day": latest_partition(state.data_root, s.uid, Timeframe.M1),
                 }
                 for s in sorted(state.registry.symbols.values(), key=lambda s: s.uid)
             ]

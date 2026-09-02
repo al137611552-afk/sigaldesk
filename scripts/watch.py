@@ -293,6 +293,24 @@ async def run(
     web_task: asyncio.Task[None] | None = None
     async with contextlib.AsyncExitStack() as stack:
         runtime = stack.enter_context(RuntimeStore(state_db))
+        # **同一个运行态只允许一个写者。** 跑两个 watch，状态机、去重表、冷却
+        # 各持一份内存态，同一根 bar 会被判两次 —— 你会收到两条一模一样的预警，
+        # 而且没有任何报错。靠人记住"别跑两个"太脆。
+        held = runtime.claim_writer(os.getpid(), int(dt.datetime.now(dt.UTC).timestamp()))
+        if held:
+            since = dt.datetime.fromtimestamp(held["started_at"], CST)
+            print(
+                f"拒绝启动：已有一个盯盘进程在用同一个运行态。\n"
+                f"  运行态  {state_db}\n"
+                f"  对方    pid {held['pid']}，自 {since:%m-%d %H:%M} 起\n"
+                f"跑两个会重复报警且不会报错。只想再看一眼就用只读面板：\n"
+                f"  python scripts/serve.py\n"
+                f"确认对方已经不在了（比如上次是被强杀的），换个运行态或删掉它的记录：\n"
+                f"  python scripts/watch.py --state-db <另一个路径>",
+                file=sys.stderr,
+            )
+            return 2
+        stack.callback(runtime.release_writer, os.getpid())
         restored = engine.restore(runtime.load_state())
         desk.restore(runtime.load_trade_state())
         print(f"运行态: {state_db}（恢复 {restored} 个规则实例）"

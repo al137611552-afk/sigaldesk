@@ -595,15 +595,71 @@ def test_intraday_cell_draws_two_lines_not_candles() -> None:
     assert "p.avg !== null" in load, "均价算不出来的点不该画，更不能用价格冒充"
 
 
-def test_symbol_picker_marks_unwatched_symbols() -> None:
-    """两个标记各回答一个问题：`主连` = 不可下单；`未盯` = 盯盘不采它的行情。
-    少了「未盯」，用户选中一个没人盯的标的只会看到空图，然后以为是行情连不上。"""
+def test_symbol_picker_is_grouped_by_whether_it_ever_fired(
+    smoke: dict[str, object],
+) -> None:
+    """图表的标的下拉框分两组。
+
+    「有信号」那组才是平时要切的（跟信号流、预警组同一批标的）；
+    「其他已注册」保留"去看一个从没预警过的标的"的能力 —— 那是这个框
+    唯一独有的作用（用来判断是规则太严还是行情真没走出形态）。
+
+    两类混在一起时，冷启动看到的是一串一模一样的选项，点进去全是空图，
+    用户会以为面板坏了（实际发生过）。
+    """
+    html = str(smoke["symbol_options_html"])
+    assert '<optgroup label="有信号">' in html and '<optgroup label="其他已注册">' in html
+    fired = html[html.index("有信号"):html.index("其他已注册")]
+    assert "BTCUSDT.PERP（2）" in fired, f"有信号的要带条数: {fired}"
+    assert "rb.CONT" not in fired, "从没触发过的不该进「有信号」组"
+
+
+def test_symbol_picker_says_why_a_symbol_would_be_empty(
+    smoke: dict[str, object],
+) -> None:
+    """**每一项都要标出"点进去可能是空的"的原因。**
+
+    - `无数据`：本地一根 bar 都没有（行情没接入 / 没回补）
+    - `数据止于 X`：有数据但停更了（主连这种派生序列不随盘更新）
+    - `未盯`：没有规则盯它 ⇒ 盯盘进程根本不采它
+    - `主连`：拼接序列，可看图可回测但**不可下单**
+
+    前三个都是空图的成因。不标出来的话用户只会以为行情连不上 ——
+    冷启动时这是最误导人的一点（用户实际撞上了：加密没接入，
+    但规则盯着 BTC/ETH，于是下拉框里干干净净什么标记都没有）。
+    """
+    html = str(smoke["symbol_options_html"])
+    assert "· 无数据" in html, f"一根 bar 都没有的标的没标出来: {html}"
+    assert "· 数据止于 05-29" in html, "停更的没标出来"
+    assert "· 主连" in html
+
+
+def test_signal_filter_is_built_from_the_signals_it_filters(
+    smoke: dict[str, object],
+) -> None:
+    """信号流的「全部标的」筛选按**信号条数**生成，与旁边的「全部规则」同源。
+
+    原来它照抄注册表 —— 筛选项和被筛的数据不是一回事，选一个从没触发过的
+    标的必然是空列表，而下拉框刚才还让你以为那里有东西。
+    """
+    html = str(smoke["symbol_filter_html"])
+    assert '<option value="">全部标的</option>' in html
+    assert "（2）" in html, f"筛选项要带条数: {html}"
+    assert "rb.CONT" not in html, "从没触发过的标的不该出现在筛选框里"
+    assert "optgroup" not in html, "筛选框不分组 —— 它本来就只列有信号的"
+
+
+def test_chart_empty_state_explains_why(smoke: dict[str, object]) -> None:
+    """空状态要说清楚**为什么**空、以及下一步做什么。
+    只说"没有数据"的话，用户只会以为行情连不上（真发生过）。"""
     js = pathlib.Path("src/sigdesk/web/static/app.js").read_text(encoding="utf-8")
-    assert 's.watched === false ? " · 未盯" : ""' in js
     load = js[js.index("async function loadChart("):]
     load = load[: load.index("\n}\n")]
     assert "meta.watched === false" in load, "空状态要按有没有人盯分开说"
     assert "不采集" in load and "universe" in load, "要说清楚为什么空、以及怎么办"
+    # 一个标的都没有数据时（全新安装）不该默认选一个空的让人以为坏了
+    assert "function showNoDataAtAll(" in js
+    assert "backfill.py" in js and "--crypto-only" in js, "要给出两个市场各自的下一步"
 
 
 # ---- 多周期十字线同步 -----------------------------------------------------

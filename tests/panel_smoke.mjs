@@ -8,14 +8,22 @@ import vm from "node:vm";
 const APP = process.argv[2] || path.join("src", "sigdesk", "web", "static", "app.js");
 const calls = [];
 
+const TODAY = new Date().toISOString().slice(0, 10);
 const FIX = {
   "/api/meta": {
     live: true, now_ts: 1788140000,
+    // last_day 三种取值都要有：**新鲜 / 停更 / 一根都没有**。
+    // 少哪一种，下拉框上对应的那条标注就没被测到（"· 无数据"这条正是
+    // 用户冷启动时最需要看到的）。`今天` 由夹具生成，否则过几天就会失效。
     symbols: [
-      { uid: "CRYPTO.OKX.BTCUSDT.PERP", market: "CRYPTO", code: "BTC-USDT-SWAP", exchange: "OKX", price_tick: 0.1 },
-      { uid: "CN.SHFE.rb2610", market: "CN", code: "rb2610", exchange: "SHFE", price_tick: 1 },
+      { uid: "CRYPTO.OKX.BTCUSDT.PERP", market: "CRYPTO", code: "BTC-USDT-SWAP",
+        exchange: "OKX", price_tick: 0.1, last_day: TODAY },
+      { uid: "CN.SHFE.rb2610", market: "CN", code: "rb2610", exchange: "SHFE",
+        price_tick: 1, last_day: TODAY },
       { uid: "CN.SHFE.rb.CONT", market: "CN", code: "rb", exchange: "SHFE", price_tick: 1,
-        is_continuous: true },
+        is_continuous: true, last_day: "2026-05-29" },      // 停更三个月
+      { uid: "CN.SHFE.ag2612", market: "CN", code: "ag2612", exchange: "SHFE",
+        price_tick: 1, last_day: null },                     // 一根 bar 都没有
     ],
     timeframes: ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w", "1mon"],
     rules: [{ id: "r1", description: "d", enabled: true, universe: ["CRYPTO.OKX.BTCUSDT.PERP"],
@@ -390,6 +398,23 @@ setTimeout(async () => {
     sandbox.__watch.tabs_after = get("#wl-tabs")._html || "";
 
     // 切到周期模式
+    // **预警组模式下的十字线同步与放大**：两者都曾只遍历 G.cells / 按 tf 比对，
+    // 在这个模式下静默失效（双击没反应、十字线不同步）。这里各验一次。
+    sandbox.__xhairSet = [];
+    const wdense = wcells.find((c) => c.points.length > 1) || wcells[0];
+    if (wdense && wdense.points.length) {
+      const wt = wdense.points[wdense.points.length - 1].time;
+      sandbox.syncCrosshair(wt, wdense.key);
+      sandbox.__watch.sync_set = (sandbox.__xhairSet || []).length;
+      sandbox.__watch.sync_skipped_source =
+        !(sandbox.__xhairSet || []).some((x) => x.key === wdense.key);
+    }
+    sandbox.zoomCell(wcells[1].key);
+    sandbox.__watch.zoomed = G().zoomed;
+    sandbox.__watch.big = wcells.filter((c) => c.root.classList.contains("big")).map((c) => c.key);
+    sandbox.zoomCell(wcells[1].key);
+    sandbox.__watch.zoom_off = G().zoomed;
+
     // 走真实的切换路径（renderGrid），不是直接改 G.mode ——
     // 要测的正是"切模式时另一种模式的格子被摘干净、这一种被建起来"
     vm.runInContext('G.mode = "tf"', sandbox);
@@ -510,6 +535,7 @@ setTimeout(async () => {
     rule_filter_html: get("#f-rule").innerHTML,
     rule_items_html: get("#rule-items").innerHTML,
     symbol_options_html: get("#c-symbol").innerHTML,
+    symbol_filter_html: get("#f-symbol").innerHTML,
     tf_buttons_html: get("#tf-group").innerHTML,
     rule_msg_text: get("#rule-msg").textContent,
     rule_banner_html: get("#rule-banner").innerHTML,

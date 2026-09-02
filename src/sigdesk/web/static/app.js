@@ -1254,12 +1254,14 @@ const PIN_SVG = `<svg width="11" height="11" viewBox="0 0 16 16" fill="none"
  * **跨周期要对齐到"包含该时刻的那根 bar"** —— 1m 上的 10:03 在 1d 上不是一根 bar，
  * 直接把原时刻塞给日线图，十字线要么不显示要么落在错的位置。
  * 取"最后一根 time <= 目标"的 bar，就是包含它的那根。 */
-function syncCrosshair(time, sourceTf) {
+function syncCrosshair(time, sourceKey) {
   G.syncing = true;
   try {
     G.lastHover = time;
-    for (const c of G.cells.values()) {
-      if (c.tf === sourceTf) continue;   // 源格子由图表自己画，别覆盖
+    // **走 activeCells() 并按 key 比对。** 只遍历 G.cells 的话预警组里同步不生效；
+    // 按 tf 比对的话预警组九格 tf 相同，会被当成"源格子"全部跳过 —— 两个都错。
+    for (const c of activeCells()) {
+      if (c.key === sourceKey) continue;   // 源格子由图表自己画，别覆盖
       if (time === null || !c.points.length) { c.chart.clearCrosshairPosition(); continue; }
       let lo = 0, hi = c.points.length - 1, found = -1;
       while (lo <= hi) {
@@ -1289,21 +1291,35 @@ const fitCell = (c) => c.chart.applyOptions({
   width: c.body.clientWidth, height: c.body.clientHeight,
 });
 
-function zoomCell(tf) {
+/* 双击放大一格 / 再双击还原。
+
+   **按 `key` 而不是 `tf` 匹配，且两种模式的格子都要遍历。**
+   预警组模式下九格的 `tf` 全都一样（整组一个周期），拿 tf 匹配会让九格一起变 big；
+   而只遍历 G.cells 的话，预警组里双击**什么都不会发生** —— 放大失效，
+   连带"放大后才允许缩放"也一并失效（用户报的"不支持放大缩小"就是这个）。 */
+function zoomCell(key) {
   const grid = $("#grid");
-  const next = G.zoomed === tf ? null : tf;
+  const next = G.zoomed === key ? null : key;
   G.zoomed = next;
   grid.classList.toggle("zoomed", !!next);
-  G.cells.forEach((c) => {
-    c.root.classList.toggle("big", c.tf === next);
-    // 放大的那格允许交互；缩回去要关掉，否则小格里误拖会把视图弄乱
-    c.chart.applyOptions({ handleScroll: !!next && c.tf === next,
-                           handleScale: !!next && c.tf === next });
-  });
+  for (const c of activeCells()) {
+    const big = c.key === next;
+    c.root.classList.toggle("big", big);
+    // 放大的那格允许滚轮缩放 / 拖动；缩回去要关掉，否则小格里误拖会把视图弄乱
+    c.chart.applyOptions({ handleScroll: big, handleScale: big });
+  }
   // 尺寸变了必须显式重算 —— 图表不会自己跟随容器
-  requestAnimationFrame(() => G.cells.forEach((c) => {
-    if (!next || c.tf === next) { fitCell(c); c.chart.timeScale().fitContent(); }
-  }));
+  requestAnimationFrame(() => {
+    for (const c of activeCells()) {
+      if (!next || c.key === next) { fitCell(c); c.chart.timeScale().fitContent(); }
+    }
+  });
+}
+
+/* 当前模式下挂在网格里的格子。两种模式的格子分别存在两个 Map 里，
+   凡是"对所有格子做点什么"的地方都必须走这里，否则又会漏掉一半。 */
+function activeCells() {
+  return [...(G.mode === "watch" ? G.wcells : G.cells).values()];
 }
 
 async function loadIntradayCell(cell) {
@@ -1616,7 +1632,7 @@ function renderGridMode() {
     : [];
   box.innerHTML = modes.map(([k, label]) =>
     `<button class="tf${k === G.mode ? " active" : ""}" data-mode="${k}">${label}</button>`)
-    .concat(tfs.length ? [`<span class="lbl" style="padding:0 4px">周期</span>`] : [])
+    .concat(tfs.length ? [`<span class="seg-lbl">周期</span>`] : [])
     .concat(tfs).join("");
   $$("#grid-mode [data-mode]").forEach((el) => {
     el.onclick = async () => {
@@ -1820,6 +1836,7 @@ function connectSSE() {
     const sig = JSON.parse(ev.data);
     S.signals.push(sig);
     queueAlert(sig);   // **只有 SSE 推来的才提醒**；开机灌进来的历史信号不响
+    fillSymbolPicker();  // 某标的第一次触发时，它才会进「有信号」那一组
     fillRuleFilter();  // 新规则第一次触发时，它才会出现在筛选框里
     renderFeed();
     if (S.symbol) await loadChart(S.selected ? S.selected.fired_at : null);
@@ -2091,6 +2108,79 @@ async function trialRule() {
 
 /* 信号流的「规则」筛选框。**必须能重填** —— 它的数据来自页面加载时拉的一次 /api/meta，
    在「规则」页新建一条规则后不重填，那条规则就要刷新整个页面才看得到（踩过）。 */
+/* 图表的标的下拉框。**分两组**：
+
+   上面「有信号」—— 这才是你平时要切的（跟信号流、预警组是同一批标的）；
+   下面「其他已注册」—— 从没预警过的，用来确认"是规则太严还是行情真没走出形态"。
+   两类混在一起时，冷启动看到的是一串一模一样的选项，点进去全是空图。
+
+   每一项都标出**为什么点进去可能是空的**：
+     · 无数据      本地一根 bar 都没有（行情没接入 / 没回补）
+     · 数据止于 X  有数据但停更了（主连这种派生序列不随盘更新）
+     · 未盯        没有规则盯它 ⇒ 盯盘进程根本不采它
+     · 主连        拼接序列，可看图可回测但**不可下单**
+   前三个都是"选中会是空图"的原因。不标出来的话，用户只会以为面板坏了。 */
+function fillSymbolPicker() {
+  const keep = $("#c-symbol").value;
+  const counts = new Map();
+  for (const s of S.signals || []) counts.set(s.symbol, (counts.get(s.symbol) || 0) + 1);
+  const today = new Date().toISOString().slice(0, 10);
+
+  const label = (s) => {
+    const tags = [];
+    if (s.is_continuous) tags.push("主连");
+    if (!s.last_day) tags.push("无数据");
+    else if (s.last_day < prevDays(today, 3)) tags.push(`数据止于 ${s.last_day.slice(5)}`);
+    if (s.watched === false && !s.is_continuous) tags.push("未盯");
+    const n = counts.get(s.uid) || 0;
+    return `<option value="${esc(s.uid)}">${esc(shortSym(s.uid))}`
+      + (n ? `（${n}）` : "")
+      + (tags.length ? " · " + tags.map(esc).join(" · ") : "")
+      + `</option>`;
+  };
+
+  const fired = S.meta.symbols.filter((s) => counts.has(s.uid));
+  const rest = S.meta.symbols.filter((s) => !counts.has(s.uid));
+  $("#c-symbol").innerHTML =
+    (fired.length ? `<optgroup label="有信号">${fired.map(label).join("")}</optgroup>` : "")
+    + (rest.length ? `<optgroup label="其他已注册">${rest.map(label).join("")}</optgroup>` : "");
+  if (keep) $("#c-symbol").value = keep;
+
+  // **筛选框只列筛得出东西的标的。** 旁边的「全部规则」一直是按信号条数生成的，
+  // 这个却是照抄注册表 —— 于是筛选项和被筛的数据不同源，选一个从没触发过的
+  // 标的必然是空列表，而下拉框刚才还让你以为那里有东西。
+  const keepF = $("#f-symbol").value;
+  const uids = [...counts.keys()].sort();
+  $("#f-symbol").innerHTML = '<option value="">全部标的</option>'
+    + uids.map((u) => `<option value="${esc(u)}">${esc(shortSym(u))}（${counts.get(u)}）</option>`)
+      .join("");
+  $("#f-symbol").value = keepF;
+}
+
+/* 往前推 n 天的 YYYY-MM-DD。判"停更"用，不需要日历精度 —— 周末休市两天，
+   所以阈值取 3 天，否则每个周末所有期货都会被标成"数据止于"。 */
+function prevDays(iso, n) {
+  const d = new Date(iso + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() - n);
+  return d.toISOString().slice(0, 10);
+}
+
+/* 一个标的都没有数据：这不是错误，是**还没开始用**。
+   说清楚下一步做什么，而不是留一张空图让人以为坏了。 */
+function showNoDataAtAll() {
+  const box = $("#chart");
+  if (!box) return;
+  const el = document.createElement("div");
+  el.className = "chart-empty";
+  el.innerHTML = `<div>本地还没有任何行情数据。<br><br>`
+    + `期货：先回补历史 <span class="mono">scripts/backfill.py &lt;标的&gt; &lt;起&gt; &lt;止&gt;</span><br>`
+    + `加密：跑 <span class="mono">scripts/watch.py --crypto-only --web 127.0.0.1:8000</span>`
+    + `（不需要凭据）<br><br>`
+    + `<span class="lbl">回补/盯盘跑起来之后刷新本页即可。</span></div>`;
+  box.appendChild(el);
+  $("#chart-note").textContent = "没有行情数据";
+}
+
 function fillRuleFilter() {
   const keep = $("#f-rule").value;
   // **信号流里的规则 ∪ 当前加载的规则**，不能只取后者：
@@ -2140,15 +2230,7 @@ async function boot() {
   S.meta = await api("/api/meta");
   setBadge("#mode", S.meta.live ? "实时 · 连接中" : "独立只读", "");
 
-  // 两个标记都要有，各回答一个问题：
-  //   主连  = 这是拼接序列，可回测/看图但**不可下单**
-  //   未盯  = 没有任何规则盯它，**盯盘进程不会采它的行情**，选中就是空图
-  const opts = S.meta.symbols.map((s) =>
-    `<option value="${esc(s.uid)}">${esc(shortSym(s.uid))}`
-    + `${s.is_continuous ? " · 主连" : ""}${s.watched === false ? " · 未盯" : ""}</option>`
-  ).join("");
-  $("#c-symbol").innerHTML = opts;
-  $("#f-symbol").innerHTML = '<option value="">全部标的</option>' + opts;
+  fillSymbolPicker();
   fillRuleFilter();
 
   $("#tf-group").innerHTML = S.meta.timeframes
@@ -2168,10 +2250,16 @@ async function boot() {
 
   // 优先级：选中的信号 > 最新信号 > 正在被规则监视的标的 > 注册表第一个。
   // 直接取注册表第一个会选到一个规则根本没盯、本地也没数据的标的，开屏就是一片空白。
+  // 冷启动时**别自作主张选一个没数据的**。原来退到"第一条规则 universe 的第一个"，
+  // 那个标的多半一根 bar 都没有 —— 一打开就是空图，看着像面板坏了（用户实际撞上了）。
+  // 一个都没有数据时干脆不选，让空状态自己去说明为什么空。
+  const hasData = (uid) => (S.meta.symbols.find((x) => x.uid === uid) || {}).last_day;
   S.symbol = S.selected?.symbol || S.signals.at(-1)?.symbol
-    || (S.meta.rules[0]?.universe || [])[0]
-    || S.meta.symbols[0]?.uid || null;
+    || (S.meta.rules[0]?.universe || []).find(hasData)
+    || (S.meta.symbols.find((x) => x.last_day) || {}).uid
+    || null;
   if (S.symbol) { $("#c-symbol").value = S.symbol; await loadChart(S.selected?.fired_at); }
+  else showNoDataAtAll();
   $("#c-symbol").onchange = async () => {
     S.symbol = $("#c-symbol").value; S.selected = null;
     renderFeed();
@@ -2198,7 +2286,7 @@ async function boot() {
     if (t.dataset.view === "trade") await loadTrade();
     if (t.dataset.view === "ops") await loadOps();
     if (t.dataset.view === "live") {
-      if (G.on) G.cells.forEach(fitCell);
+      if (G.on) activeCells().forEach(fitCell);
       else if (S.chart) S.chart.applyOptions({
         width: $("#chart").clientWidth, height: $("#chart").clientHeight });
     }

@@ -12,13 +12,14 @@
 from __future__ import annotations
 
 import datetime as dt
+import pathlib
 from typing import Any
 
 import pytest
 
 from sigdesk.core.models import CST, Bar, Timeframe
 from sigdesk.feed.quote_api import normalize_klines
-from sigdesk.store.bar_builder import BarBuilder, aggregate
+from sigdesk.store.bar_builder import BarBuilder, CalendarBuilder, aggregate
 
 SYMBOL = "CN.SHFE.rb2610"
 FUTURE = 4_102_444_800  # 2100 年：把夹具里所有 bar 都判为已收盘
@@ -170,3 +171,48 @@ def test_rejects_non_1m_input() -> None:
     b = BarBuilder("X", Timeframe.M5)
     with pytest.raises(ValueError, match="只接受 1m 输入"):
         b.push(Bar("X", Timeframe.M5, 0, 300, 1, 1, 1, 1, 1))
+
+
+def test_calendar_builder_accepts_any_smaller_timeframe() -> None:
+    """日线可以由 1m 聚合，**也可以直接从接口拉**（interval_range=101）；
+    后者再聚合出周线月线时，输入就是 1d。
+
+    原来硬性要求 1m 输入，于是"直接拉日线"这条路走不通 —— 而它正是让
+    日/周/月线不再受制于回补了多长 1m 的关键（回补三个月 1m 只得到
+    45 根日线、10 根周线、3 根月线）。
+    """
+    day = Bar(symbol="X", timeframe=Timeframe.D1, open_ts=0, close_ts=86400,
+              open=1, high=2, low=0.5, close=1.5, volume=10, closed=True,
+              trading_day="2026-09-01")
+    out = CalendarBuilder("X", Timeframe.W1).push(day)
+    assert out is None, "第一根不该立刻吐出周线"
+
+
+def test_calendar_builder_still_rejects_equal_or_larger() -> None:
+    """保护还在：不能把周线喂进日线聚合器，也不能自己喂自己。"""
+    week = Bar(symbol="X", timeframe=Timeframe.W1, open_ts=0, close_ts=86400,
+               open=1, high=2, low=0.5, close=1.5, volume=10, closed=True,
+               trading_day="2026-09-01")
+    for tf in (Timeframe.D1, Timeframe.W1):
+        with pytest.raises(ValueError, match="只接受更小的周期"):
+            CalendarBuilder("X", tf).push(week)
+
+
+def test_backfill_only_aggregates_larger_timeframes() -> None:
+    """拉日线时不该去聚合 5m/15m —— 无从聚合。
+
+    **必须用 rank 而不是 seconds 比较**：日历周期（日/周/月）的 `seconds` 是 0，
+    拿它比较会把 5m~4h 全判成"更大"，然后在 BarBuilder 里炸掉（第一版就是这么错的）。
+    """
+    assert Timeframe.D1.seconds == 0 and Timeframe.M5.seconds > 0, "前提：日历周期 seconds 为 0"
+    assert Timeframe.D1.rank > Timeframe.M5.rank, "rank 才跨墙钟/日历单调"
+    src = pathlib.Path("scripts/backfill.py").read_text(encoding="utf-8")
+    assert "t.rank > timeframe.rank" in src, "过滤条件用错字段会在拉日线时直接崩"
+
+
+def test_backfill_documents_not_mixing_sources_for_the_same_range() -> None:
+    """接口日线是交易所口径，1m 聚合出的日线是本项目的交易日归属（夜盘归下一交易日），
+    对夜盘品种可能不同。同一分区后写覆盖先写，混用会得到一份来源不明的日线。"""
+    src = pathlib.Path("scripts/backfill.py").read_text(encoding="utf-8")
+    assert "别对同一区间都跑" in src
+    assert "--timeframe" in src

@@ -5,6 +5,7 @@ M2 验收：**进程重启后状态机恢复，不丢报不重报**。
 
 from __future__ import annotations
 
+import os
 import pathlib
 from typing import Any
 
@@ -315,3 +316,61 @@ def test_in_memory_store_works() -> None:
     with RuntimeStore() as rs:
         rs.save_state([])
         assert rs.load_state() == []
+
+
+# ---------------------------------------------------------------- 单写者
+
+
+def test_second_writer_is_refused(tmp_path: pathlib.Path) -> None:
+    """**同一个运行态只允许一个写者。**
+
+    跑两个 watch，状态机、去重表、冷却各持一份内存态，同一根 bar 会被判两次 ——
+    你会收到两条一模一样的预警，而且**没有任何报错**。靠人记住"别跑两个"太脆。
+    """
+    db = tmp_path / "rt.sqlite3"
+    with RuntimeStore(db) as s:
+        assert s.claim_writer(os.getpid(), 100) is None, "第一个应当拿到"
+        held = s.claim_writer(1, 200)          # pid 1 一定存在
+        assert held is not None and held["pid"] == os.getpid()
+        assert held["started_at"] == 100, "要能告诉用户对方是什么时候起的"
+
+
+def test_same_process_can_reclaim(tmp_path: pathlib.Path) -> None:
+    """同一个进程重入不该把自己挡在门外（重连、重建 store 都会走到）。"""
+    with RuntimeStore(tmp_path / "rt.sqlite3") as s:
+        assert s.claim_writer(os.getpid(), 100) is None
+        assert s.claim_writer(os.getpid(), 200) is None
+
+
+def test_dead_writer_does_not_block(tmp_path: pathlib.Path) -> None:
+    """**上次是被强杀的，这次要能起来。**
+
+    这正是不用 pid 文件的原因：pid 文件崩溃后会留下，反而把自己挡在门外。
+    这里存 pid，启动时验对方是不是还活着。
+    """
+    db = tmp_path / "rt.sqlite3"
+    with RuntimeStore(db) as s:
+        s.claim_writer(999_999_999, 100)       # 一个不可能存在的 pid
+        assert s.claim_writer(os.getpid(), 200) is None, "死掉的写者不该挡路"
+
+
+def test_release_only_removes_your_own_claim(tmp_path: pathlib.Path) -> None:
+    """让出时**只删自己的** —— 别把接手的那个进程的记录抹掉。"""
+    with RuntimeStore(tmp_path / "rt.sqlite3") as s:
+        s.claim_writer(os.getpid(), 100)
+        s.release_writer(12345)                # 不是我的，不该动
+        assert s.claim_writer(1, 200) is not None, "记录被误删了"
+        s.release_writer(os.getpid())
+        assert s.claim_writer(1, 300) is None, "让出后别人应当能接手"
+
+
+def test_watch_refuses_a_second_instance() -> None:
+    """接线还在：watch.py 启动时要 claim，退出时要 release。
+
+    真跑验证过：第二个实例退出码 2 并打印对方 pid 与启动时间；
+    第一个退出后 writer 记录自动让出（DEVLOG 2026-09-02）。
+    """
+    src = pathlib.Path("scripts/watch.py").read_text(encoding="utf-8")
+    assert "claim_writer(os.getpid()" in src
+    assert "stack.callback(runtime.release_writer" in src, "退出时要让出，否则下次起不来"
+    assert "serve.py" in src, "拒绝时要给出正确的替代做法（只读面板）"

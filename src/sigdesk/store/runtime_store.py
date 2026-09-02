@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import sqlite3
 import threading
@@ -92,6 +93,20 @@ CREATE TABLE IF NOT EXISTS watchlist_pin (
     pinned_at INTEGER NOT NULL
 );
 """
+
+
+def _alive(pid: int) -> bool:
+    """那个 pid 还在不在。**探测失败一律当"还活着"** ——
+    误判成"死了"会放行第二个写者，那正是要避免的；误判成"活着"只是多问一句。"""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)          # 信号 0 = 只检查存在性与权限，不真的发信号
+    except ProcessLookupError:
+        return False
+    except (PermissionError, OSError):
+        return True              # 存在但不归我管，或系统不支持 —— 保守认为活着
+    return True
 
 
 class RuntimeStore:
@@ -194,6 +209,52 @@ class RuntimeStore:
             return cur.rowcount
 
     # ------------------------------------------------------------ 信号
+
+    # ------------------------------------------------------------ 单写者
+
+    def claim_writer(self, pid: int, started_at: int) -> dict[str, int] | None:
+        """声明自己是这个运行态的唯一写者。已被别人占着就返回对方的信息。
+
+        **为什么需要**：状态机、去重表、冷却都在这个库里，两个 watch 进程
+        各持一份内存态，同一根 bar 会被判两次 —— 你会收到两条一模一样的预警，
+        而且**没有任何报错**。靠人记住"别跑两个"太脆。
+
+        用 SQLite 的行锁做，不用 pid 文件：pid 文件在崩溃后会留下，
+        下次启动反而把自己挡在门外。这里存 pid，启动时用它验对方是不是还活着。
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM meta WHERE key = 'writer'"
+            ).fetchone()
+            if row:
+                try:
+                    other = json.loads(str(row["value"]))
+                except (TypeError, ValueError):
+                    other = None
+                if other and int(other.get("pid", 0)) != pid and _alive(int(other["pid"])):
+                    return {"pid": int(other["pid"]), "started_at": int(other["started_at"])}
+            self._conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('writer', ?)",
+                (json.dumps({"pid": pid, "started_at": started_at}),),
+            )
+            self._conn.commit()
+        return None
+
+    def release_writer(self, pid: int) -> None:
+        """让出写者身份。**只删自己的** —— 别把接手的那个进程的记录抹掉。"""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM meta WHERE key = 'writer'"
+            ).fetchone()
+            if not row:
+                return
+            try:
+                if int(json.loads(str(row["value"]))["pid"]) != pid:
+                    return
+            except (TypeError, ValueError, KeyError):
+                return
+            self._conn.execute("DELETE FROM meta WHERE key = 'writer'")
+            self._conn.commit()
 
     # ------------------------------------------------------------ 预警组
 

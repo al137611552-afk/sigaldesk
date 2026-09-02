@@ -82,6 +82,16 @@ py -3.12 -m venv .venv
 
 ## 三、跑起来
 
+**长期运行的只有两个入口**，其余脚本都是跑完就退的工具（见 README 的「工具箱」）：
+
+| 想干什么 | 跑这个 |
+|---|---|
+| 日常盯盘 | `scripts\watch.py --web 127.0.0.1:8000` |
+| 已经有一个在盯了，只想再看一眼 | `scripts\serve.py`（只读）|
+
+**别同时跑两个 `watch.py`** —— 状态机和去重表在同一个 SQLite 里，
+同一根 bar 会被判两次、重复报警。它自己会检测并拒绝，但正确做法是用 `serve.py`。
+
 ### 只看加密（最快，不需要凭据）
 
 ```powershell
@@ -100,7 +110,21 @@ py -3.12 -m venv .venv
 .venv\Scripts\python.exe scripts\backfill.py CN.SHFE.au2610 2026-08-01 2026-09-01
 ```
 
-`config\symbols.yaml` 里的每个期货合约都要回补一遍。然后：
+`config\symbols.yaml` 里的每个期货合约都要回补一遍。
+
+**想看长历史的日线/周线/月线，别去回补长区间的 1m。** 高周期原本全靠 1m 聚合，
+回补三个月 1m 只得到 45 根日线、10 根周线、3 根月线；而拉两年 1m 每个品种约 12 万根。
+接口原生支持日线，直接拉：
+
+```powershell
+.venv\Scripts\python.exe scripts\backfill.py CN.SHFE.rb2610 2024-01-01 2026-09-01 --timeframe 1d
+```
+
+两种模式**别对同一区间都跑**：接口日线是交易所口径，1m 聚合出的日线是本项目的
+交易日归属（夜盘归下一交易日），对夜盘品种可能不同，同一分区后写覆盖先写。
+正确用法是分段不重叠 —— 远期用 `--timeframe 1d`，近期用默认的 1m。
+
+然后：
 
 ```powershell
 .venv\Scripts\python.exe scripts\watch.py --web 127.0.0.1:8000
@@ -139,7 +163,26 @@ py -3.12 -m venv .venv
 
 ---
 
-## 五、开机自动跑（可选）
+## 五、备份
+
+要备份的只有两样：
+
+```
+data\runtime.sqlite3      信号、状态机、纸上账户、预警组的钉住
+data\bars\                行情 Parquet（可以重新回补，但很花时间）
+```
+
+**`runtime.sqlite3` 必须连 `-wal` 一起拷**，只拷主文件会丢最近的信号
+（SQLite 用的是 WAL 模式，新写入先进 `-wal`）。最省心的办法是**在进程停着的时候**
+整个目录一起拷，或者用 SQLite 自带的备份：
+
+```powershell
+.venv\Scripts\python.exe -c "import sqlite3,sys; s=sqlite3.connect('data/runtime.sqlite3'); d=sqlite3.connect('backup.sqlite3'); s.backup(d)"
+```
+
+凭据在 `C:\Users\<你>\.signal-desk\.env`，**单独存，别跟代码放一起**。
+
+## 六、开机自动跑（可选）
 
 用「任务计划程序」，别用 `.bat` 双击 —— 关窗口就断了。
 
@@ -155,7 +198,7 @@ py -3.12 -m venv .venv
 
 ---
 
-## 六、出问题先看这几条
+## 七、出问题先看这几条
 
 | 现象 | 多半是 |
 |---|---|
@@ -163,6 +206,9 @@ py -3.12 -m venv .venv
 | 面板打得开但图是空的 | 没回补历史，或那个标的没有规则盯着（格子里会写明）|
 | 期货连不上、加密正常 | key 或 TLS 指纹没配 / 证书换了指纹对不上。先 `setup_env.py --show` 看键在不在，再 `pin_tls.py --write` 重抓 |
 | 一直没有信号 | 正常。规则是多级别链路，几小时才一条很常见；「运行健康」页看行情有没有在进 |
+| 日/周/月线只有几根 | 高周期由 1m 聚合，1m 回补多长就只有多少根。用 `--timeframe 1d` 直接拉长历史 |
+| 下拉框里的标的点进去是空图 | 看它的标注：`无数据`（没回补/行情没接入）、`未盯`（没规则盯它，不采）、`数据止于 X`（停更）|
+| 提示"已有一个盯盘进程在用同一个运行态" | 就是字面意思。想再看一眼用 `serve.py`，别起第二个 `watch.py` |
 | 预警组里钉不动 | 面板绑了非回环地址。钉住会触发采集，那时会被拒绝 |
 | 端口被占 | `--web 127.0.0.1:8010`，或 `serve.py --port 8010` |
 

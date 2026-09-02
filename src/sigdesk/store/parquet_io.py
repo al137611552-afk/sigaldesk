@@ -43,6 +43,21 @@ def partition_path(root: pathlib.Path, symbol: str, timeframe: Timeframe, day: s
     return root / market / symbol / timeframe.value / f"{day}.parquet"
 
 
+def latest_partition(root: pathlib.Path, symbol: str, timeframe: Timeframe) -> str | None:
+    """这个标的最后一个分区日（``YYYY-MM-DD``），没有数据返回 None。
+
+    **只列目录名，不打开任何文件** —— 面板启动时要对每个标的问一遍，
+    读文件会让 /api/meta 慢到肉眼可见。分区名本身就是日期（期货是交易日），
+    拿它当"数据止于何时"足够准，也不需要解析 Parquet。
+    """
+    d = partition_path(root, symbol, timeframe, "x").parent
+    try:
+        days = [f.stem for f in d.iterdir() if f.suffix == ".parquet"]
+    except OSError:
+        return None
+    return max(days) if days else None
+
+
 def write_bars(root: pathlib.Path, bars: list[Bar]) -> list[pathlib.Path]:
     """按分区写入，返回写过的文件。同一分区内按 close_ts 排序去重，后来者覆盖。"""
     groups: dict[tuple[str, Timeframe, str], dict[int, Bar]] = defaultdict(dict)

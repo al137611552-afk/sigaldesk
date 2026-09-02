@@ -190,8 +190,12 @@ class CalendarBuilder:
         self._key: str | None = None
 
     def push(self, bar: Bar) -> Bar | None:
-        if bar.timeframe is not Timeframe.M1:
-            raise ValueError(f"CalendarBuilder 只接受 1m 输入，收到 {bar.timeframe}")
+        # **接受任何比自己小的周期**，不只是 1m。日线可以由 1m 聚合，
+        # 也可以直接从接口拉（interval_range=101）；后者再聚合出周线月线时
+        # 输入就是 1d。只卡"不能比自己大或相等"，保护还在（1w 喂进 1d 仍会报）。
+        if bar.timeframe.rank >= self.timeframe.rank:
+            raise ValueError(
+                f"CalendarBuilder({self.timeframe}) 只接受更小的周期，收到 {bar.timeframe}")
         if not bar.closed:
             return None
 
@@ -199,7 +203,7 @@ class CalendarBuilder:
         emitted: Bar | None = None
         if self._cur is not None and self._key != key:
             if key < (self._key or ""):
-                raise ValueError(f"1m bar 时间倒流: 当前 {self._key} > 新 bar {key}")
+                raise ValueError(f"bar 时间倒流: 当前 {self._key} > 新 bar {key}")
             emitted = self._cur.to_bar(self.symbol, self.timeframe, closed=True)
             self._cur = None
 

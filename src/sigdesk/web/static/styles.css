@@ -58,7 +58,14 @@ input:focus,select:focus{outline:none;border-color:var(--accent)}
 .ohlc{display:flex;gap:14px;flex-wrap:wrap}
 .ohlc span{font-size:12px}
 .spacer{flex:1}
-.tf-group{display:flex;gap:2px}
+/* align-items **必须写**：默认 stretch 会把组里的裸 <span>（比如「周期」这个
+   前缀标签）拉成与按钮同高，文字顶在上沿，看着像字号也不对。
+   按钮自身有 padding+border 撑高度，所以只有标签会露馅。 */
+.tf-group{display:flex;gap:2px;align-items:center}
+/* 分段按钮组里的前缀标签（「周期」）。与前面的按钮拉开距离，
+   否则它会被当成又一个按钮的一部分。 */
+.tf-group .seg-lbl{color:var(--dim);font-size:11px;letter-spacing:.3px;
+  margin:0 4px 0 10px;white-space:nowrap;line-height:1}
 .tf{padding:3px 9px;border:1px solid var(--line);background:var(--panel);color:var(--dim);
   border-radius:5px;font-size:11px;cursor:pointer;font-family:inherit}
 .tf.active{color:var(--fg);border-color:var(--accent)}
