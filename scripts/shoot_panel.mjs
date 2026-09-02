@@ -250,7 +250,7 @@ await page.evaluate(() => {
   });
   pushToast(mk("CRYPTO.OKX.BTCUSDT.PERP", "long", 78012.4, "kan-da-zuo-xiao"));
   pushToast(mk("CN.SHFE.rb2610", "short", 3131, "volume-spike"));
-  pushToast(mk("CRYPTO.OKX.ETHUSDT.PERP", "neutral", 2451.7, "ema-cross-long"));
+  pushToast(mk("CRYPTO.OKX.ETHUSDT.PERP", "neutral", 2451.7, "breakout-long"));
 });
 await page.waitForTimeout(600);
 await shot('panel-10-信号弹窗');

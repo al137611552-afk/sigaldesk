@@ -140,11 +140,11 @@ class ServiceState:
         self.require_edit()
         if self.rules_dir is None:
             raise HTTPException(500, "未配置规则目录")
-        return RuleStore(self.rules_dir)
+        return RuleStore(self.rules_dir, self.registry)
 
     def reload_rules(self) -> None:
         if self.rules_dir is not None:
-            self.rules = load_rules(self.rules_dir)
+            self.rules = load_rules(self.rules_dir, self.registry)
 
 
 class RuleSource(BaseModel):
@@ -568,7 +568,7 @@ def create_app(state: ServiceState) -> FastAPI:
         """只校验不落盘。走的是与真正加载**完全同一条**编译路径 ——
         校验通过却启动失败，比不校验还糟。"""
         try:
-            rule, _ = parse_source(body.source)
+            rule, _ = parse_source(body.source, state.registry)
         except RuleStoreError as e:
             return {"ok": False, "error": str(e)}
         return {"ok": True, "rule": _rule_summary(rule)}
@@ -621,7 +621,7 @@ def create_app(state: ServiceState) -> FastAPI:
         """
         state.require_edit()
         try:
-            rule, _ = parse_source(body.source)
+            rule, _ = parse_source(body.source, state.registry)
         except RuleStoreError as e:
             raise HTTPException(400, str(e)) from None
 

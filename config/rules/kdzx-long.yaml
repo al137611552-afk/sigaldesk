@@ -37,11 +37,12 @@ enabled: false
 description: 看大做小·多头：1h 多头趋势中回踩均线，5m 出买点并走出箱体
 
 universe:
-  - CN.SHFE.rb2610
-  - CN.SHFE.au2610
-  - CN.SHFE.cu2610
-  - CN.CFFEX.IF2609
-  - CN.DCE.m2701
+  # **国内期货全品种**：`CN.*` 在加载时展开成 symbols.yaml 里所有可交易的 CN 标的
+  # （主连自动排除 —— 它不可下单，不该产生预警）。
+  # 新增一个期货合约只要往 symbols.yaml 里加，规则文件不用动。
+  - CN.*
+  # 加密只盯 BTC / ETH：OKX 上几百个永续里绝大多数流动性差、容易被操纵，
+  # 而这些规则的 ATR 归一阈值假设了正常深度；每多一个还要多一路 WS 订阅与落盘。
   - CRYPTO.OKX.BTCUSDT.PERP
   - CRYPTO.OKX.ETHUSDT.PERP
 

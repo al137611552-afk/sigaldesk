@@ -68,8 +68,8 @@ def moving_averages(
 ) -> list[MovingAverage]:
     """按 spec 逐条算出均线。用引擎同款的 SMA/EMA，逐根 update，与实盘完全一致。
 
-    ``source="volume"`` 出量能均线。**这条尤其要和引擎同源**：内置规则
-    `volume-spike` 判的就是 `volume > sma(volume, 20) * 2.5` ——
+    ``source="volume"`` 出量能均线。**这条尤其要和引擎同源**：breakout 规则的
+    扳机判的就是 `volume > sma(volume, 20) * 1.5` ——
     图上那条线要是算法不同，你就看不出它当时为什么触发。
     """
     wanted = parse_spec(spec)

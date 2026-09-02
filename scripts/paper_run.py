@@ -77,7 +77,7 @@ def main() -> int:
     args = ap.parse_args()
 
     registry = load_registry(ROOT / "config")
-    rules = load_rules(args.rules_dir)
+    rules = load_rules(args.rules_dir, registry)
     params = load_trading(args.trading)
     if args.force_enable:
         params.enabled = True

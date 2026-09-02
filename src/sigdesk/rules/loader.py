@@ -173,7 +173,7 @@ def _context(raw: Any, rule_id: str, where: str) -> tuple[tuple[str, CompiledExp
     return tuple((str(k), _compile(str(v), rule_id, f"{where}.{k}")) for k, v in raw.items())
 
 
-def load_rule(raw: dict[str, Any]) -> Rule:
+def load_rule(raw: dict[str, Any], registry: Any = None) -> Rule:
     rule_id = str(raw.get("id") or "")
     if not rule_id:
         raise RuleError("规则缺少 id")
@@ -192,9 +192,7 @@ def load_rule(raw: dict[str, Any]) -> Rule:
     if len(set(seen_roles)) != len(seen_roles):
         raise RuleError(f"规则 {rule_id} 的条件角色重复: {seen_roles}")
 
-    universe = tuple(str(u) for u in (raw.get("universe") or ()))
-    if not universe:
-        raise RuleError(f"规则 {rule_id} 的 universe 为空，不会作用于任何标的")
+    universe = _universe(raw.get("universe") or (), rule_id, registry)
 
     emit_raw = raw.get("emit") or {}
     try:
@@ -261,7 +259,48 @@ def load_rule(raw: dict[str, Any]) -> Rule:
     )
 
 
-def load_rules(directory: pathlib.Path) -> list[Rule]:
+def _universe(raw: Any, rule_id: str, registry: Any) -> tuple[str, ...]:
+    """解析 universe，**在这里就把通配符展开成具体清单**。
+
+    支持 ``CN.*`` 这种前缀通配（"所有国内期货"）。展开放在加载期而不是让下游
+    各自去解析：``Rule.universe`` 有十几处消费方（引擎、试算、面板、采集列表、
+    纸上回测…），任何一处忘了处理通配符，表现都是"这个标的悄悄不被盯"。
+    展开一次，下游拿到的永远是具体 uid。
+
+    **主连不进**：它是拼接序列，可回测可看图但不可下单（CLAUDE.md 坑#9），
+    不该产生预警。``registry.tradable()`` 本来就排除它们。
+
+    没有 registry 却用了通配符时**直接报错**，不是静默当成空 —— 空 universe
+    的规则一条都不会报，而且毫无提示。
+    """
+    items = [str(u) for u in raw]
+    if not items:
+        raise RuleError(f"规则 {rule_id} 的 universe 为空，不会作用于任何标的")
+    out: list[str] = []
+    for item in items:
+        if not item.endswith(".*"):
+            out.append(item)
+            continue
+        if registry is None:
+            raise RuleError(
+                f"规则 {rule_id} 用了通配符 {item}，但加载时没有传入 registry，"
+                f"无法展开成具体标的"
+            )
+        prefix = item[:-1]          # "CN.*" -> "CN."
+        hit = sorted(s.uid for s in registry.tradable() if s.uid.startswith(prefix))
+        if not hit:
+            raise RuleError(f"规则 {rule_id} 的 {item} 没有匹配到任何标的")
+        out.extend(hit)
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for u in out:            # 去重但保序：通配符展开的和手写的可能重合
+        if u not in seen:
+            seen.add(u)
+            uniq.append(u)
+    return tuple(uniq)
+
+
+def load_rules(directory: pathlib.Path, registry: Any = None) -> list[Rule]:
     """加载目录下所有 *.yaml。文件名与 id 无关，id 重复直接报错。
 
     **fail-fast**：任何一个文件坏了就整体拒绝启动。静默跳过坏规则会让人以为自己被覆盖了，
@@ -274,7 +313,7 @@ def load_rules(directory: pathlib.Path) -> list[Rule]:
         if not isinstance(raw, dict):
             raise RuleError(f"{path} 不是一个规则对象")
         try:
-            rule = load_rule(raw)
+            rule = load_rule(raw, registry)
         except RuleError as e:
             raise RuleError(f"{path.name}: {e}") from e
         if rule.id in seen:

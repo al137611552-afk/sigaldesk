@@ -111,5 +111,13 @@ def test_parse_source_compiles_expressions() -> None:
 
 
 def test_shipped_rules_dir_survives_validate_all() -> None:
-    """真规则目录必须能过 validate_all —— 它就是"下次还起得来吗"的判据。"""
-    RuleStore(pathlib.Path("config/rules")).validate_all()
+    """真规则目录必须能过 validate_all —— 它就是"下次还起得来吗"的判据。
+
+    要带 registry：出厂规则的 universe 用了 `CN.*`（国内期货全品种），
+    展开要靠它。不带的话这条会失败，而那正是设计如此 ——
+    没有 registry 就展不开通配符，宁可报错也不要静默当成空 universe。
+    """
+    from sigdesk.core.registry import load_registry
+
+    RuleStore(pathlib.Path("config/rules"),
+              load_registry(pathlib.Path("config"))).validate_all()

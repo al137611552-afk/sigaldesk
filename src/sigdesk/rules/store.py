@@ -19,6 +19,7 @@ import os
 import pathlib
 import re
 import tempfile
+from typing import Any
 
 import yaml
 
@@ -43,8 +44,13 @@ def _check_id(rule_id: str) -> str:
     return rule_id
 
 
-def parse_source(source: str) -> tuple[Rule, dict[str, object]]:
-    """解析并**编译**一段规则 YAML。语法校验就是这一步，与真正加载走同一条路。"""
+def parse_source(source: str, registry: Any = None) -> tuple[Rule, dict[str, object]]:
+    """解析并**编译**一段规则 YAML。语法校验就是这一步，与真正加载走同一条路。
+
+    ``registry`` 用于展开 universe 里的通配符（``CN.*`` = 国内期货全品种）。
+    不传的话带通配符的规则会被判为非法 —— 面板保存/校验时必须传，
+    否则你在面板里写 `CN.*` 会被拒，而它在盘上是合法的。
+    """
     try:
         raw = yaml.safe_load(source)
     except yaml.YAMLError as e:
@@ -52,7 +58,7 @@ def parse_source(source: str) -> tuple[Rule, dict[str, object]]:
     if not isinstance(raw, dict):
         raise RuleStoreError("规则必须是一个 YAML 对象（顶层是 id/universe/conditions 这些键）")
     try:
-        rule = load_rule(raw)
+        rule = load_rule(raw, registry)
     except RuleError as e:
         raise RuleStoreError(str(e)) from e
     _check_id(rule.id)
@@ -62,8 +68,11 @@ def parse_source(source: str) -> tuple[Rule, dict[str, object]]:
 class RuleStore:
     """规则目录的读写。构造不做 IO，方法各自负责。"""
 
-    def __init__(self, directory: pathlib.Path) -> None:
+    def __init__(self, directory: pathlib.Path, registry: Any = None) -> None:
         self.directory = directory
+        # 展开 universe 里的通配符要用它（`CN.*` = 国内期货全品种）。
+        # 面板的规则读写必须传，否则写着 `CN.*` 的规则在面板里存不进去。
+        self.registry = registry
 
     def path_of(self, rule_id: str) -> pathlib.Path:
         return self.directory / f"{_check_id(rule_id)}.yaml"
@@ -81,7 +90,7 @@ class RuleStore:
 
     def save(self, source: str, *, expect_id: str | None = None, create: bool = False) -> Rule:
         """校验 -> 原子写。`create=True` 时目标已存在即报错，避免误覆盖别人的规则。"""
-        rule, _ = parse_source(source)
+        rule, _ = parse_source(source, self.registry)
         if expect_id is not None and rule.id != expect_id:
             raise RuleStoreError(
                 f"内容里的 id 是 {rule.id!r}，与要保存的 {expect_id!r} 不一致。"
@@ -131,7 +140,7 @@ class RuleStore:
         """把整个目录编译一遍。保存后调它，确保下次启动一定起得来。"""
         seen: dict[str, str] = {}
         for path in sorted(self.directory.glob("*.yaml")):
-            rule, _ = parse_source(path.read_text(encoding="utf-8"))
+            rule, _ = parse_source(path.read_text(encoding="utf-8"), self.registry)
             if rule.id in seen:
                 raise RuleStoreError(f"规则 id 重复: {rule.id}（{seen[rule.id]} 与 {path.name}）")
             seen[rule.id] = path.name

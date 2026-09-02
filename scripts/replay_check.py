@@ -118,7 +118,7 @@ def collect_replay(rules: list[Rule], uids: list[str], data_root: pathlib.Path) 
 
 async def main(minutes: float, rules_dir: pathlib.Path, history_bars: int, keep: bool) -> int:
     registry = load_registry(ROOT / "config")
-    rules = load_rules(rules_dir)
+    rules = load_rules(rules_dir, registry)
     uids = sorted({u for r in rules for u in r.universe})
     symbols = [registry.symbol(u) for u in uids if registry.symbol(u).market is Market.CRYPTO]
     if not symbols:

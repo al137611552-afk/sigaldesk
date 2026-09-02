@@ -279,7 +279,7 @@ async function loadChart(centerTs) {
   const tf = S.timeframe;
   const data = await api(
     `/api/bars?symbol=${encodeURIComponent(S.symbol)}&timeframe=${tf}&limit=1500`
-    + `&ma=${MA_MAIN}&vma=${VMA_MAIN}&ref_ma=${encodeURIComponent(REF_MA_MAIN)}`);
+    + `&ma=${MA_MAIN}&vma=${VMA_MAIN}&ref_ma=${encodeURIComponent(refSpec(tf))}`);
   S.bars = data.bars;
   $("#chart-sym").textContent = `${shortSym(S.symbol)} · ${tf}`;
   if (!data.bars.length) {
@@ -1131,8 +1131,8 @@ const GRID_BARS = 220;
    单图多画几条，小格子只画两条 —— 小格里六条线就是一团麻。 */
 const MA_MAIN = "5,10,20,60";
 const MA_CELL = "5,20";
-/* 量能均线。**20 这个窗口不是随便挑的** —— 内置规则 volume-spike 判的就是
-   `volume > sma(volume, 20) * 2.5`，图上这条线和规则看的必须是同一个数，
+/* 量能均线。**20 这个窗口不是随便挑的** —— breakout 规则的扳机判的就是
+   `volume > sma(volume, 20) * 1.5`，图上这条线和规则看的必须是同一个数，
    否则你看不出它当时为什么触发。 */
 const VMA_MAIN = "5,20";
 const VMA_CELL = "20";
@@ -1143,7 +1143,11 @@ const MA_COLORS = ["#e6c07b", "#61afef", "#c678dd", "#98c379", "#e06c75", "#56b6
    **画得比本级别均线粗、颜色更实**：它们代表的是更大的力量，视觉权重要相称；
    细了就淹在本级别那几条里，等于没画。 */
 const REF_MA_MAIN = "1h:ema20,1d:sma20";
-const REF_MA_CELL = "1h:ema20";
+/* **只在 5m 上叠。** 别的级别不需要：1h 图上再叠 1h 均线是重复，
+   1d 图上叠 1h 是噪音，1m 图上那两条台阶会横穿整屏。
+   5m 是找买点的级别，"大级别在哪儿"正是这里唯一缺的信息。 */
+const REF_MA_TF = "5m";
+const refSpec = (tf) => (tf === REF_MA_TF ? REF_MA_MAIN : "");
 const REF_COLORS = ["#ff9d5c", "#7c9cff"];
 const REF_WIDTH = 3;
 /* 成交量画在同一窗格底部（v4 没有真正的多窗格）：
@@ -1402,7 +1406,7 @@ async function loadCell(cell) {
   // 最后一个还原的落地什么就剩什么 —— 表现是切换标的后左上角一直显示某个格子的标的。
   const uid = cell.symbol || S.symbol;
   const q = `symbol=${encodeURIComponent(uid)}&timeframe=${cell.tf}&ma=${MA_CELL}`
-    + `&vma=${VMA_CELL}&ref_ma=${encodeURIComponent(REF_MA_CELL)}`;
+    + `&vma=${VMA_CELL}&ref_ma=${encodeURIComponent(refSpec(cell.tf))}`;
   const [data, marks] = await Promise.all([
     api(`/api/bars?${q}&limit=${GRID_BARS}`),
     api(`/api/markers?${q}`).catch(() => ({ markers: [], fills: [] })),

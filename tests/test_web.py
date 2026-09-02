@@ -550,7 +550,8 @@ def test_meta_flags_symbols_no_rule_is_watching(tmp_path: pathlib.Path) -> None:
     from sigdesk.rules.loader import load_rules
 
     reg = load_registry(pathlib.Path("config"))
-    rules = load_rules(pathlib.Path("config/rules"))
+    rules = load_rules(pathlib.Path("config/rules"),
+                       load_registry(pathlib.Path("config")))
     state = ServiceState(
         runtime=RuntimeStore(tmp_path / "r.sqlite3"), data_root=tmp_path,
         registry=reg, rules=rules,

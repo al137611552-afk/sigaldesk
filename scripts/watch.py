@@ -248,7 +248,7 @@ async def run(
     data_root: pathlib.Path | None = None,
 ) -> int:
     registry = load_registry(ROOT / "config")
-    rules = load_rules(rules_dir)
+    rules = load_rules(rules_dir, registry)
     if not rules:
         print("没有启用的规则（config/rules/ 为空？）")
         return 1

@@ -54,11 +54,13 @@ def main() -> int:
             f"要远程编辑请自己开 SSH 隧道：ssh -L 8000:127.0.0.1:8000 <host>"
         )
         return 2
+    # 先建 registry：规则的 universe 里可能有 `CN.*` 这种通配符，展开要用它
+    registry = load_registry(ROOT / "config")
     state = ServiceState(
         runtime=RuntimeStore(args.state_db),
         data_root=args.data_root,
-        registry=load_registry(ROOT / "config"),
-        rules=load_rules(args.rules_dir),
+        registry=registry,
+        rules=load_rules(args.rules_dir, registry),
         live=False,
         rules_dir=args.rules_dir,
         edit_enabled=bool(args.allow_edit),

@@ -9,6 +9,7 @@ import pytest
 import yaml
 
 from sigdesk.core.models import Bar, Market, Timeframe
+from sigdesk.core.registry import load_registry
 from sigdesk.feed.okx import normalize_candles
 from sigdesk.rules.engine import DEDUP_MEMORY, RuleEngine
 from sigdesk.rules.loader import RuleError, load_rule, load_rules
@@ -54,17 +55,36 @@ def feed(engine: RuleEngine, store: BarStore, bars: list[Bar]) -> list[Signal]:
 # ---------------------------------------------------------------- 加载与校验
 
 
-def test_loads_the_shipped_example_rule() -> None:
-    """仓库里带的示例规则必须能加载 —— 否则等于文档里放了个坏样板。"""
-    rules = load_rules(ROOT / "config" / "rules")
-    by_id = {r.id: r for r in rules}
-    assert "ema-cross-long" in by_id, "单级别示例规则没被加载"
-    rule = by_id["ema-cross-long"]
+def test_all_shipped_rules_load() -> None:
+    """仓库里带的每一条规则都必须能加载 —— 否则等于放了个坏样板。
+
+    **不点名具体某条规则**：规则会随策略调整增删（bounce / ema-cross / volume-spike
+    都删过），点名就会在删规则时误伤这条测试，让人以为删坏了东西。
+    这里守的是"发出去的都是好的"，具体某条规则的语义由它自己的试算负责。
+    """
+    rules = load_rules(ROOT / "config" / "rules", load_registry(ROOT / "config"))
+    assert rules, "config/rules 空了"
+    assert len({r.id for r in rules}) == len(rules), "有重复 id"
+    for r in rules:
+        assert r.conditions, f"{r.id} 没有条件"
+        assert r.universe, f"{r.id} 没有标的"
+
+
+def test_single_level_rule_still_compiles() -> None:
+    """单级别规则（只有一段条件）仍然要能编译。
+
+    M1 只支持单级别，M2 之后共用同一个模型和引擎（ADR-0001）——
+    这条守的是"长度为 1 的链路没被多级别改动搞坏"。**用内联规则**，
+    不依赖 config/rules 里恰好有哪条。
+    """
+    rule = load_rule(rule_yaml(
+        conditions=[{"on": "trigger", "mode": "event",
+                     "when": "cross_up(close, ema(close, 20))"}],
+        timeframes={"trigger": "15m"},
+    ))
     assert rule.timeframe is Timeframe.M15
     assert rule.trigger.mode is Mode.EVENT
     assert len(rule.conditions) == 1 and not rule.is_multi_level
-    assert rule.emit.cooldown_s == 1800
-    assert [name for name, _ in rule.context] == ["ema20", "ema60", "rsi14", "atr14", "vol_ratio"]
 
 
 def test_multi_level_example_now_loads() -> None:
@@ -89,7 +109,8 @@ def test_multi_level_example_now_loads() -> None:
 
 def test_every_shipped_rule_file_loads() -> None:
     """config/rules/ 下的文件都会被真加载：任何一个坏了就是启动失败，不能只测示例那一个。"""
-    assert len(load_rules(ROOT / "config" / "rules")) >= 1
+    assert len(load_rules(ROOT / "config" / "rules",
+                          load_registry(ROOT / "config"))) >= 1
 
 
 @pytest.mark.parametrize(
@@ -454,3 +475,60 @@ def test_unknown_priority_is_rejected() -> None:
 def test_known_priorities_load() -> None:
     for name in ("high", "normal", "low"):
         assert str(load_rule(rule_yaml(emit={"priority": name})).emit.priority) == name
+
+
+# ---------------------------------------------------------------- universe 通配符
+
+
+def _reg() -> Any:
+    return load_registry(ROOT / "config")
+
+
+def test_wildcard_universe_expands_at_load_time() -> None:
+    """`CN.*` 在**加载时**就展开成具体 uid，下游拿到的永远是具体清单。
+
+    不这么做的话，`Rule.universe` 有十几处消费方（引擎、试算、面板、采集列表、
+    纸上回测…），任何一处忘了处理通配符，表现都是"这个标的悄悄不被盯" ——
+    没有报错，只是永远收不到那个品种的信号。
+    """
+    rule = load_rule(rule_yaml(universe=["CN.*"]), _reg())
+    assert rule.universe, "通配符展开成了空"
+    assert all(u.startswith("CN.") for u in rule.universe)
+    assert "CN.*" not in rule.universe, "通配符本身不该留在展开结果里"
+
+
+def test_wildcard_excludes_continuous_series() -> None:
+    """**主连不进 universe。** 它是拼接序列，可回测可看图但不可下单
+    （CLAUDE.md 坑#9），不该产生预警。"""
+    rule = load_rule(rule_yaml(universe=["CN.*"]), _reg())
+    assert not any(u.endswith(".CONT") for u in rule.universe), rule.universe
+
+
+def test_wildcard_without_registry_is_refused() -> None:
+    """没有 registry 就展不开 —— **报错，不要静默当成空**。
+    空 universe 的规则一条都不会报，而且毫无提示。"""
+    with pytest.raises(RuleError, match="通配符"):
+        load_rule(rule_yaml(universe=["CN.*"]))
+
+
+def test_wildcard_matching_nothing_is_refused() -> None:
+    """写错前缀（比如 `CNN.*`）匹配不到任何标的，同样要报错而不是静默为空。"""
+    with pytest.raises(RuleError, match="没有匹配到"):
+        load_rule(rule_yaml(universe=["CNN.*"]), _reg())
+
+
+def test_wildcard_and_explicit_do_not_duplicate() -> None:
+    """通配符展开的和手写的重合时只留一份，且保持顺序。"""
+    reg = _reg()
+    one = sorted(s.uid for s in reg.tradable() if s.uid.startswith("CN."))[0]
+    rule = load_rule(rule_yaml(universe=["CN.*", one]), reg)
+    assert rule.universe.count(one) == 1
+
+
+def test_shipped_rules_cover_all_domestic_futures() -> None:
+    """出厂规则用 `CN.*` 盯国内期货全品种：**往 symbols.yaml 加合约就自动纳入**，
+    不用再去改每个规则文件（改两处迟早对不上）。"""
+    reg = _reg()
+    cn = {s.uid for s in reg.tradable() if s.uid.startswith("CN.")}
+    for r in load_rules(ROOT / "config" / "rules", reg):
+        assert cn <= set(r.universe), f"{r.id} 没覆盖全部国内期货"
