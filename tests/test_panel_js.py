@@ -938,3 +938,20 @@ def test_reference_mas_skip_warmup_like_normal_mas(smoke: dict[str, object]) -> 
     lines = smoke["ma_lines"]
     assert isinstance(lines, list)
     assert lines[:4] == [4, 0, 4, 3], lines
+
+
+def test_reference_mas_are_drawn_as_steps() -> None:
+    """跨周期均线画成**明确的阶梯**（LineType.WithSteps）。
+
+    它本来就是台阶：一根 1h 均线的值在整个下一小时里都是同一个数，
+    到下一根 1h 收盘才跳。用普通折线画，每次跳变会连出一段陡斜线，
+    缩小看就是一片锯齿 —— 看着像"想画平滑却在抖"，其实是画对了。
+
+    **不许为了好看改成平滑曲线**：那等于在两次收盘之间显示一个当时还不知道的
+    中间值，是视觉上的未来泄露（与 align_as_of 守的是同一件事）。
+    """
+    js = pathlib.Path("src/sigdesk/web/static/app.js").read_text(encoding="utf-8")
+    fn = js[js.index("function drawRefMa("):]
+    fn = fn[: fn.index("\n}\n")]
+    assert "lineType: 1" in fn, "没画成阶梯线"
+    assert "lineType: 2" not in fn, "曲线插值会在两次收盘之间显示未知的中间值"

@@ -7,6 +7,9 @@
     # 默认：拉 1m，聚合出 5m ~ 1mon（近期用，一天约 500 根）
     python scripts/backfill.py CN.SHFE.rb2610 2026-08-20 2026-08-27
 
+    # 加密同一条命令（走 OKX 公开接口，**不需要凭据**）
+    python scripts/backfill.py CRYPTO.OKX.BTCUSDT.PERP 2024-01-01 2026-09-01 --timeframe 1d
+
     # 长历史：**直接拉日线**，只聚合出周线月线
     python scripts/backfill.py CN.SHFE.rb2610 2024-01-01 2026-09-01 --timeframe 1d
 
@@ -33,8 +36,15 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
 from sigdesk.core.env import load_env  # noqa: E402
-from sigdesk.core.models import CST, QUOTE_API_INTERVAL, Timeframe  # noqa: E402
+from sigdesk.core.models import (  # noqa: E402
+    CST,
+    QUOTE_API_INTERVAL,
+    Market,
+    Symbol,
+    Timeframe,
+)
 from sigdesk.core.registry import load_registry  # noqa: E402
+from sigdesk.feed.okx import OkxRestClient, OkxRestConfig  # noqa: E402
 from sigdesk.feed.quote_api import (  # noqa: E402
     QuoteApiClient,
     QuoteApiConfig,
@@ -53,6 +63,35 @@ ENV = load_env(ROOT)
 CHUNK_DAYS = 7   # 单次 by-timerange 的最大跨度，再大就会读超时
 DERIVED = [Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1, Timeframe.H4,
            Timeframe.D1, Timeframe.W1, Timeframe.MON1]
+
+
+async def _crypto(sym: Symbol, uid: str, start: str, end: str,
+                  timeframe: Timeframe) -> int:
+    """加密走 OKX 公开接口（**不需要凭据**），其余流程与期货一致。
+
+    统一进这个脚本而不是另写一个：两个市场的"回补历史"是同一件事，
+    分成两条命令的话，用户每次都得先想"这个标的属于哪边"。
+    """
+    # OKX 的 instId 是 `code`（BTC-USDT-SWAP），不是 `ccxt_symbol`（BTC/USDT:USDT）——
+    # 后者是给 ccxt 用的另一套写法。watch.py 里也是用 code 调的，保持一致。
+    if not sym.code:
+        print(f"拒绝：{uid} 缺少 code 映射")
+        return 2
+    start_ts, end_ts = _day_ts(start), _day_ts(end, end=True)
+    async with OkxRestClient(OkxRestConfig()) as client:
+        bars = await client.fetch_range(sym.code, uid, timeframe, start_ts, end_ts)
+    if not bars:
+        print("无数据。OKX 的历史深度有限，起始日期太早会取不到。")
+        return 1
+    data_root = ROOT / "data" / "bars"
+    print(f"{uid}  {timeframe.value}: {len(bars)} 根 -> "
+          f"{len(write_bars(data_root, bars))} 个分区")
+    for tf in [t for t in DERIVED if t.rank > timeframe.rank]:
+        higher = aggregate_complete(uid, bars, tf)
+        print(f"{uid}  {tf.value}: {len(higher)} 根 -> "
+              f"{len(write_bars(data_root, higher))} 个分区")
+    print(f"落盘目录: {data_root}")
+    return 0
 
 
 def _day_ts(text: str, end: bool = False) -> int:
@@ -76,6 +115,10 @@ async def main(uid: str, start: str, end: str, timeframe: Timeframe = Timeframe.
     if sym.is_continuous:
         print(f"拒绝：{uid} 是主连/指数序列，口径不可复现，不得入库（CLAUDE.md 坑#9）")
         return 2
+    # 加密走 OKX，**在检查 quote_code 之前分派** —— quote_code 是期货行情 API 的
+    # 代码映射，加密标的本来就没有，先检查会把它挡在门外。
+    if sym.market is Market.CRYPTO:
+        return await _crypto(sym, uid, start, end, timeframe)
     if not sym.quote_code:
         print(f"拒绝：{uid} 缺少 quote_code 映射")
         return 2

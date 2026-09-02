@@ -65,7 +65,10 @@ def normalize_candles(
     - 加密 7×24 无交易日概念 ⇒ ``trading_day=None``，落盘按 UTC 自然日分区
     - candle 接口不含持仓量 ⇒ ``open_interest=0.0``（需要时另查 open-interest 接口）
     """
-    period = timeframe.seconds
+    # **加密的"一天"就是 24 小时 UTC**，与国内期货的交易日不同（那边一个交易日
+    # 含前一晚的夜盘，所以 Timeframe.D1 在模型里是日历周期、seconds 为 0）。
+    # OKX 的 1D bar 是定长的，这里补上它的长度；周线月线仍然不定长，照旧拒绝。
+    period = 86400 if timeframe is Timeframe.D1 else timeframe.seconds
     if period <= 0:
         raise ValueError(f"{timeframe} 不是固定长度周期，OKX 归一化暂不支持")
     out: list[Bar] = []

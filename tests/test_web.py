@@ -761,3 +761,23 @@ def test_ref_ma_bad_spec_is_skipped_not_fatal(
     d = client.get(f"/api/bars?symbol={BTC}&timeframe=1m&limit=20"
                    f"&ref_ma=nope,5m:ema3,1h").json()
     assert [m["label"] for m in d["ref_ma"]] == ["5m EMA3"]
+
+
+def test_backfill_dispatches_crypto_to_okx() -> None:
+    """加密走 OKX 公开接口（不需要凭据），**且要在检查 quote_code 之前分派** ——
+    `quote_code` 是期货行情 API 的代码映射，加密标的本来就没有，先检查会把它挡在门外。
+
+    统一进一个脚本而不是另写一个：两个市场的"回补历史"是同一件事，
+    分成两条命令的话，用户每次都得先想"这个标的属于哪边"。
+    """
+    src = pathlib.Path("scripts/backfill.py").read_text(encoding="utf-8")
+    i_dispatch = src.index("if sym.market is Market.CRYPTO:")
+    i_check = src.index('缺少 quote_code 映射')
+    assert i_dispatch < i_check, "分派必须在 quote_code 校验之前"
+    fn = src[src.index("async def _crypto("):]
+    fn = fn[: fn.index("\n\ndef ")]
+    # OKX 的 instId 是 code（BTC-USDT-SWAP），不是 ccxt_symbol（BTC/USDT:USDT）。
+    # 只看**代码行**：解释这个区别的注释里出现 ccxt_symbol 是应该的。
+    code_lines = [ln for ln in fn.splitlines() if not ln.strip().startswith("#")]
+    assert any("sym.code" in ln for ln in code_lines)
+    assert not any("ccxt_symbol" in ln for ln in code_lines)

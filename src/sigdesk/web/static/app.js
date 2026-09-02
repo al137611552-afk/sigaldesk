@@ -273,6 +273,21 @@ function renderOhlc(b) {
 // 所以期货这里先把时间戳平移 +8h，标签才与看盘软件一致。
 const chartTime = (ts, uid) => ts + (isCrypto(uid) ? 0 : 8 * 3600);
 
+/* 左上角那行标题。**三种视图各写各的会漏**：网格模式走 loadGrid / loadWatch，
+   根本不经过 loadChart，于是切换标的后标题一直停在上一个（用户报的 bug）。
+   收成一个函数，凡是换了"现在在看什么"的地方都调它。 */
+function setChartTitle() {
+  const el = $("#chart-sym");
+  if (!el) return;
+  if (!G.on) { el.textContent = `${shortSym(S.symbol)} · ${S.timeframe}`; return; }
+  if (G.mode === "watch") {
+    const m = (G.wl?.markets || []).find((x) => x.key === G.market);
+    el.textContent = `${m ? m.label : ""}预警组 · ${G.wtf}`;
+  } else {
+    el.textContent = `${shortSym(S.symbol)} · 九周期`;
+  }
+}
+
 async function loadChart(centerTs) {
   if (!S.symbol) return;
   ensureChart();
@@ -281,7 +296,7 @@ async function loadChart(centerTs) {
     `/api/bars?symbol=${encodeURIComponent(S.symbol)}&timeframe=${tf}&limit=1500`
     + `&ma=${MA_MAIN}&vma=${VMA_MAIN}&ref_ma=${encodeURIComponent(refSpec(tf))}`);
   S.bars = data.bars;
-  $("#chart-sym").textContent = `${shortSym(S.symbol)} · ${tf}`;
+  setChartTitle();
   if (!data.bars.length) {
     S.series.setData([]); renderOhlc(null);
     // 自绘层也要清，否则上一个标的的标记会留在空图上
@@ -391,6 +406,13 @@ function drawRefMa(chart, data, opts, uid) {
     store.push(chart.addLineSeries({
       color: REF_COLORS[store.length % REF_COLORS.length],
       lineWidth: REF_WIDTH,        // 比本级别均线粗，一眼分得开
+      // **画成明确的阶梯**（LineType.WithSteps）。跨周期均线本来就是台阶：
+      // 一根 1h 均线的值在整个下一小时里都是同一个数，到下一根 1h 收盘才跳。
+      // 用普通折线画的话，每次跳变会连出一段陡斜线，缩小看就是一片锯齿 ——
+      // 看着像"想画平滑却在抖"，其实是画对了。阶梯线让"它就是台阶"这件事一目了然。
+      // **不要为了好看改成平滑曲线**：那等于在两次收盘之间显示一个当时还不知道的
+      // 中间值，是视觉上的未来泄露。
+      lineType: 1,
       priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
     }));
   }
@@ -1466,6 +1488,7 @@ async function loadGrid() {
   $("#chart-note").textContent =
     `${shortSym(S.symbol)}　九宫格：${tfs.join(" / ")}　每格最多 ${GRID_BARS} 根`
     + `　悬停 = 九格同步十字线　shift+单击 = 锁定该时刻　双击 = 放大　Esc = 返回`;
+  setChartTitle();
   await Promise.all(cells.map((c) => loadCell(c).catch((e) => {
     c.head.textContent = "加载失败";
     console.error(c.tf, e);
@@ -1524,6 +1547,7 @@ async function loadWatch() {
     G.slots.push(slot);
   }
 
+  setChartTitle();
   const over = market.pinned_over_slots;
   $("#chart-note").textContent =
     `${market.label}预警组：${entries.length} / ${d.slots} 格`
@@ -2320,7 +2344,9 @@ async function boot() {
   $("#c-symbol").onchange = async () => {
     S.symbol = $("#c-symbol").value; S.selected = null;
     renderFeed();
-    if (G.on) await loadGrid(); else await loadChart();
+    // **走 renderGrid 而不是 loadGrid**：网格有两种模式，直接调 loadGrid 会在
+    // 预警组模式下把周期格子塞进正在显示标的格子的网格里。
+    if (G.on) await renderGrid(); else await loadChart();
   };
   $("#grid-toggle").onclick = () => toggleGrid();
   $("#f-rule").onchange = $("#f-symbol").onchange = renderFeed;

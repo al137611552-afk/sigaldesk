@@ -166,3 +166,24 @@ async def test_fetch_range_clips_to_requested_window(btc_swap_okx: dict[str, Any
     lo, hi = all_bars[10].close_ts, all_bars[20].close_ts
     got = await _FakeClient(rows).fetch_range("BTC-USDT-SWAP", SYMBOL, Timeframe.M1, lo, hi)
     assert [b.close_ts for b in got] == [b.close_ts for b in all_bars[11:21]]
+
+
+def test_daily_candles_use_24h_periods() -> None:
+    """**加密的"一天"就是 24 小时 UTC。**
+
+    `Timeframe.D1` 在模型里是日历周期（`seconds == 0`），因为国内期货的一个交易日
+    含前一晚的夜盘、长度不固定。但 OKX 的 1D bar 是定长的，归一化时要补上 86400 ——
+    不补的话 `open_ts = close_ts - 0`，日线回补直接报"不是固定长度周期"。
+    """
+    rows = [["1735689600000", "1", "2", "0.5", "1.5", "10", "10", "15000", "1"]]
+    bars = normalize_candles(rows, symbol="X", timeframe=Timeframe.D1)
+    assert len(bars) == 1
+    assert bars[0].close_ts - bars[0].open_ts == 86400
+
+
+def test_weekly_and_monthly_are_still_refused() -> None:
+    """周线月线是真的不定长，仍然拒绝 —— 它们由日线聚合出来，不从 OKX 直接拉。"""
+    rows = [["1735689600000", "1", "2", "0.5", "1.5", "10", "10", "15000", "1"]]
+    for tf in (Timeframe.W1, Timeframe.MON1):
+        with pytest.raises(ValueError, match="不是固定长度周期"):
+            normalize_candles(rows, symbol="X", timeframe=tf)
