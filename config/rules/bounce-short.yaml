@@ -1,0 +1,81 @@
+# 超涨回落（空头）—— 全品种通用
+#
+# 与 kdzx 的关系：**互补，不重叠**。
+#   kdzx-short 的 zone 要求 `abs(close-ema20) < atr*0.8`（贴着均线进）；
+#   本规则要求 `close > ema20 + atr*2.0`（涨远了才进）。
+#   两个条件天然互斥，同一时刻不会都成立。
+#
+# **① 只要求均线仍在下行，不要求 close < ema20** —— 要求了就和"急涨到均线上方"
+# 直接矛盾，链路永远推进不下去（写规则时最容易犯的一类错：两段条件互相排斥）。
+#
+#
+# ⚠️ **这条规则很低频，而且第一版写出来是一条都不触发的。** 过程值得记：
+#
+#   ①趋势(1h ema20 上行) 和 ②偏离(涨到 ema20 上方 2 ATR) 都是 state 模式，
+#   意味着**必须同时持续成立** —— 但深涨两倍 ATR 的时候，1h 的 20 均线必然跟着下拐。
+#   两段条件在统计上互斥，链路永远推进不到扳机。试算实测：
+#     ①+④ = 78 条   ②+④ = 2 条   ①+②+④ = **0 条**
+#   参数怎么调都救不了（偏离 2.0 → 1.0 条数纹丝不动，那就是"卡在别处"的信号）。
+#
+#   修法：**②改成 window** —— "最近 6 根 1h 内曾经深涨过"，而不是"现在仍然深涨"。
+#   它不再需要和 ① 同时持续成立，链路就通了。
+#   同时去掉了原来的 ③超卖：偏离 1.5 ATR 本身已经蕴含超卖，多一段只是把窗口卡得更死
+#   （③+④ 单独测也只有 1 条）。
+#
+# 当前口径的试算（7 品种、约两个月）：**3 条**。两个放松的旋钮，按需要开：
+#   - 扳机加 `or cross_up(close, ema(close, 20))`（收复 15m 均线）→ 8 条
+#   - 偏离阈值 1.5 → 1.2 ATR                                    → 14 条
+#   两个都开 → 14 条、覆盖 6 个品种。**先看信号点长什么样再决定放松到哪一档。**
+#
+# 想改成**纯超买做空**（不看大方向、直接摸顶）：把 ① 整段删掉即可。
+# 那是另一种交易，失败模式完全不同，建议先分开统计再决定。
+id: bounce-short
+enabled: false          # 先试算，看过数据再决定要不要上
+description: 超涨回落·空头：1h 均线仍下行但价格急涨超买，15m 双顶确认回落
+
+universe:
+  - CN.SHFE.rb2610
+  - CN.SHFE.au2610
+  - CN.SHFE.cu2610
+  - CN.CFFEX.IF2609
+  - CN.DCE.m2701
+  - CRYPTO.OKX.BTCUSDT.PERP
+  - CRYPTO.OKX.ETHUSDT.PERP
+
+timeframes:
+  trend: 1h
+  far: 1h
+  turn: 15m
+
+conditions:
+  # ① 大方向还在：均线本身仍在下行。**不看 close 在均线哪一侧**（见文件头）
+  - on: trend
+    mode: state
+    when: ema(close, 20) < prev(ema(close, 20))
+
+  # ② 偏离均线远：涨到均线上方且距离超过 2 倍 ATR。ATR 归一，全品种同一套参数
+  - on: far
+    mode: window
+    within: 6            # 最近 6 根 1h 内**曾经**深偏离过（不是"现在仍然"，见文件头）
+    when: close > ema(close, 20) + atr(14) * 1.5
+
+  # ③ 扳机：15m 双顶。**"涨得远"本身不是卖点**，双顶才是"开始回落"的证据 ——
+  #    少了这一段就是纯摸顶
+  - on: turn
+    mode: event
+    when: double_top(5, 0.004)
+
+context:
+  atr14: atr(14)
+  rsi14: rsi(14)          # 快照里仍然带上，复盘时看当时超没超卖
+context_by_role:
+  far:
+    ema20: ema(close, 20)
+    dist_atr: (close - ema(close, 20)) / atr(14)
+
+emit:
+  direction: short
+  ttl: 32 bars            # 布防后 32 根 15m（8 小时）内没等到双顶就撤防
+  cooldown: 1h
+  priority: high
+  dedup_key: "{symbol}:{rule}:{far_bar_close_ts}"

@@ -882,3 +882,36 @@ def test_switching_modes_detaches_the_other_modes_cells(
     assert w["wcells_detached"] is True, "切到周期模式后预警组的格子还挂在网格里"
     grid = smoke["grid"]
     assert isinstance(grid, dict) and len(grid["cells"]) == 9  # type: ignore[arg-type]
+
+
+def test_loading_the_watchlist_does_not_clobber_the_selected_symbol(
+    smoke: dict[str, object],
+) -> None:
+    """**载入预警组不许改全局 `S.symbol`。**
+
+    九个格子是并发加载的。曾经靠"临时把 S.symbol 改成本格的标的、await 完再改回来"
+    给 loadCell 传参 —— 并发下每个格子捕获到的"原值"是别人的值，最后一个还原的
+    落地什么就剩什么。表现：下拉框切换标的后，左上角一直显示某个格子的标的
+    （用户报的 bug）。修法不是加锁，是**格子自己带标的**，根本不碰全局。
+    """
+    w = _w(smoke)
+    assert w["symbol_kept"] is True, "载入预警组把全局选中的标的改掉了"
+    assert w["cell_symbols"] == w["symbols"], "格子没有各自带上自己的标的"
+
+
+def test_grid_cells_allow_wheel_zoom() -> None:
+    """九宫格里每一格都能滚轮缩放 / 拖动。
+
+    原来是全关的（怕小格里误拖把视图弄乱），但那等于"九宫格里根本没法细看" ——
+    用户第一件想做的事就是滚轮放大某一格。双击仍然留给"放大这一格"，
+    所以要**显式关掉坐标轴的双击复位**，否则两个手势会打架。
+    """
+    js = pathlib.Path("src/sigdesk/web/static/app.js").read_text(encoding="utf-8")
+    fn = js[js.index("function makeCell("):]
+    fn = fn[: fn.index("\n}\n")]
+    assert "mouseWheel: true" in fn, "滚轮缩放没打开"
+    assert "axisDoubleClickReset: false" in fn, "双击要留给放大格子，不能被坐标轴复位抢走"
+    # zoomCell 不该再开关交互 —— 现在一直开着
+    zoom = js[js.index("function zoomCell("):]
+    zoom = zoom[: zoom.index("\n}\n")]
+    assert "handleScroll" not in zoom, "交互开关已经不归 zoomCell 管了"

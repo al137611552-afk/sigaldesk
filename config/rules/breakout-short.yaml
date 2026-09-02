@@ -1,0 +1,72 @@
+# 趋势中段横盘后继续跌破（空头）—— 全品种通用
+#
+# 与 kdzx 的分工：kdzx 抓"反抽均线的卖点"，本规则抓"横盘后的跌破"。
+# 两者在 ①② 上相似但阈值不同，**有可能同一时刻都触发** ——
+# 那时图上会折成「S×2」，详情里能点开看是哪两条。先跑一段看重叠有多少，
+# 重叠严重再考虑加互斥条件。
+#
+# **"中段"是个代理，不是真的知道趋势走了多久。**
+# `abs(close-ema20) < atr*2.5` 的意思只是"还没走到极端偏离"，即不是末端加速。
+# 真要判"趋势第几根"需要新函数（现在没有）。这个数是主要调参入口：
+#   调小 = 只在贴近均线时才认，信号少；调大 = 放宽到已经拉开一段，信号多。
+id: breakout-short
+enabled: false          # 先试算，看过数据再决定要不要上
+description: 突破·空头：1h 空头趋势中段，15m 横盘后 5m 放量下破前 20 根区间
+
+universe:
+  - CN.SHFE.rb2610
+  - CN.SHFE.au2610
+  - CN.SHFE.cu2610
+  - CN.CFFEX.IF2609
+  - CN.DCE.m2701
+  - CRYPTO.OKX.BTCUSDT.PERP
+  - CRYPTO.OKX.ETHUSDT.PERP
+
+timeframes:
+  trend: 1h
+  mid: 1h
+  box: 15m
+  brk: 5m
+
+conditions:
+  # ① 大方向：1h 收在 20 均线下方且均线下行（与 kdzx 同）
+  - on: trend
+    mode: state
+    when: close < ema(close, 20) and ema(close, 20) < prev(ema(close, 20))
+
+  # ② "中段"的代理：还没跌爆。见文件头 —— 这是个粗糙代理，也是主要调参入口
+  - on: mid
+    mode: state
+    when: abs(close - ema(close, 20)) < atr(14) * 2.5
+
+  # ③ 横盘调整：15m 上 20 根（5 小时）振幅小于 0.8%
+  - on: box
+    mode: state
+    when: consolidation(20, 0.008)
+
+  # ④ 扳机：下破前 20 根 5m 的区间 + 放量。
+  #    range() **不含当前根** —— 含了的话当前根永远落在区间内，breakout 恒为假。
+  #    量能门槛沿用内置 volume-spike 的口径（那条用 2.5，这里放松到 1.5）：
+  #    图上那条量能均线和规则看的必须是同一个数，否则看不出它当时为什么触发。
+  #    **无量破位同样是典型假突破**，这一段不能省。
+  - on: brk
+    mode: event
+    when: breakout(range(20), dir='down') and volume > sma(volume, 20) * 1.5
+
+context:
+  atr14: atr(14)
+  vol_ratio: volume / sma(volume, 20)
+context_by_role:
+  mid:
+    ema20: ema(close, 20)
+    dist_atr: abs(close - ema(close, 20)) / atr(14)
+  box:
+    box_high: highest(high, 20)
+    box_low: lowest(low, 20)
+
+emit:
+  direction: short
+  ttl: 24 bars            # 布防后 24 根 5m（2 小时）内没等到跌破就撤防
+  cooldown: 30m
+  priority: high
+  dedup_key: "{symbol}:{rule}:{box_bar_close_ts}"

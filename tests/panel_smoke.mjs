@@ -372,9 +372,15 @@ setTimeout(async () => {
     const G = () => vm.runInContext("G", sandbox);
     // 网格默认落在**预警组**模式（G.mode = "watch"）。先验它，再切回周期模式 ——
     // 两种模式共用一套格子构造，任一条路径崩了都得当场看见。
+    // **载入预警组不许改全局 S.symbol。** 九格是并发加载的，靠"临时改全局
+    // 再改回来"传参会串味 —— 最后一个还原的落地什么就剩什么，表现是
+    // 左上角一直显示某个格子的标的（用户报的 bug）。
+    const symBefore = vm.runInContext("S.symbol", sandbox);
     await sandbox.toggleGrid(true);
     const wcells = [...G().wcells.values()];
     sandbox.__watch = {
+      symbol_kept: vm.runInContext("S.symbol", sandbox) === symBefore,
+      cell_symbols: wcells.map((c) => c.symbol),
       mode: G().mode,
       market: G().market,
       tf: G().wtf,

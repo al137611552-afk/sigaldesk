@@ -340,6 +340,9 @@ async function loadChart(centerTs) {
  */
 function drawOverlays(chart, priceSeries, data, opts) {
   const host = opts.host;
+  // 时区换算按**这一格的标的**走：期货要 +8h，加密不用。
+  // 预警组里九格可能是不同市场的，读全局 S.symbol 会让其中一批错 8 小时。
+  const uid = opts.symbol || S.symbol;
   const lines = data.ma || [];
   drawVolumeMa(chart, data, opts);
   host[opts.maStore] = host[opts.maStore] || [];
@@ -353,14 +356,14 @@ function drawOverlays(chart, priceSeries, data, opts) {
   lines.forEach((m, i) => {
     store[i].applyOptions({ color: MA_COLORS[i % MA_COLORS.length] });
     store[i].setData(data.bars
-      .map((b, k) => ({ time: chartTime(b.close_ts, S.symbol), value: m.values[k] }))
+      .map((b, k) => ({ time: chartTime(b.close_ts, uid), value: m.values[k] }))
       .filter((pt) => pt.value !== null && pt.value !== undefined));
   });
   for (let i = lines.length; i < store.length; i += 1) store[i].setData([]);
 
   if (opts.volume) {
     opts.volume.setData(data.bars.map((b) => ({
-      time: chartTime(b.close_ts, S.symbol),
+      time: chartTime(b.close_ts, uid),
       value: b.volume,
       // 量柱跟着当根阴阳走 —— 和 K 线一个颜色语言，不用另记一套
       color: b.close >= b.open ? "rgba(38,166,154,.5)" : "rgba(239,83,80,.5)",
@@ -376,6 +379,7 @@ function drawOverlays(chart, priceSeries, data, opts) {
 function drawVolumeMa(chart, data, opts) {
   if (!opts.volume) return;
   const host = opts.host;
+  const uid = opts.symbol || S.symbol;   // 与 drawOverlays 同理：按这一格的标的换算时区
   const lines = data.vma || [];
   host.vmaSeries = host.vmaSeries || [];
   const store = host.vmaSeries;
@@ -389,7 +393,7 @@ function drawVolumeMa(chart, data, opts) {
   lines.forEach((m, i) => {
     store[i].applyOptions({ color: VMA_COLORS[i % VMA_COLORS.length] });
     store[i].setData(data.bars
-      .map((b, k) => ({ time: chartTime(b.close_ts, S.symbol), value: m.values[k] }))
+      .map((b, k) => ({ time: chartTime(b.close_ts, uid), value: m.values[k] }))
       .filter((pt) => pt.value !== null && pt.value !== undefined));
   });
   for (let i = lines.length; i < store.length; i += 1) store[i].setData([]);
@@ -1160,7 +1164,13 @@ function makeCell(map, key, tf, headHtml) {
     rightPriceScale: { borderColor: "#262c36" },
     timeScale: { borderColor: "#262c36", timeVisible: true, secondsVisible: false },
     crosshair: { mode: 0 },
-    handleScroll: false, handleScale: false,   // 小格子里误拖一下就乱了，放大后再交互
+    // 小格子里也允许滚轮缩放与拖动。原来是全关的（怕误拖把视图弄乱），
+    // 但那等于"九宫格里根本没法细看"——用户第一件想做的事就是滚轮放大某一格。
+    // 折中：**关掉双击缩放**（双击留给"放大这一格"），其余交互放开。
+    handleScroll: { mouseWheel: true, pressedMouseMove: true,
+                    horzTouchDrag: true, vertTouchDrag: false },
+    handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true,
+                   axisDoubleClickReset: false },
   });
   // 分时是两条折线（价格 + 均价），其余是 K 线 —— 结构不同，建的时候就分岔
   const isIntraday = tf === INTRADAY;
@@ -1303,10 +1313,7 @@ function zoomCell(key) {
   G.zoomed = next;
   grid.classList.toggle("zoomed", !!next);
   for (const c of activeCells()) {
-    const big = c.key === next;
-    c.root.classList.toggle("big", big);
-    // 放大的那格允许滚轮缩放 / 拖动；缩回去要关掉，否则小格里误拖会把视图弄乱
-    c.chart.applyOptions({ handleScroll: big, handleScale: big });
+    c.root.classList.toggle("big", c.key === next);
   }
   // 尺寸变了必须显式重算 —— 图表不会自己跟随容器
   requestAnimationFrame(() => {
@@ -1323,7 +1330,7 @@ function activeCells() {
 }
 
 async function loadIntradayCell(cell) {
-  const d = await api(`/api/intraday?symbol=${encodeURIComponent(S.symbol)}`);
+  const d = await api(`/api/intraday?symbol=${encodeURIComponent(cell.symbol || S.symbol)}`);
   cell.body.querySelector(".cell-empty")?.remove();
   if (!d.points.length) {
     const empty = document.createElement("div");
@@ -1335,7 +1342,7 @@ async function loadIntradayCell(cell) {
     cell.head.textContent = "";
     return;
   }
-  const t = (p) => chartTime(p.ts, S.symbol);
+  const t = (p) => chartTime(p.ts, cell.symbol || S.symbol);
   const rows = d.points.map((p) => ({ time: t(p), value: p.price }));
   cell.series.setData(rows);
   cell.points = rows;
@@ -1350,7 +1357,11 @@ async function loadIntradayCell(cell) {
 
 async function loadCell(cell) {
   if (cell.tf === INTRADAY) return loadIntradayCell(cell);
-  const q = `symbol=${encodeURIComponent(S.symbol)}&timeframe=${cell.tf}&ma=${MA_CELL}&vma=${VMA_CELL}`;
+  // **格子自己带标的**，不读全局 S.symbol。预警组九格是并发加载的，
+  // 靠"临时改全局再改回来"传参会串味：每个格子捕获到的"原值"是别人的值，
+  // 最后一个还原的落地什么就剩什么 —— 表现是切换标的后左上角一直显示某个格子的标的。
+  const uid = cell.symbol || S.symbol;
+  const q = `symbol=${encodeURIComponent(uid)}&timeframe=${cell.tf}&ma=${MA_CELL}&vma=${VMA_CELL}`;
   const [data, marks] = await Promise.all([
     api(`/api/bars?${q}&limit=${GRID_BARS}`),
     api(`/api/markers?${q}`).catch(() => ({ markers: [], fills: [] })),
@@ -1369,7 +1380,7 @@ async function loadCell(cell) {
     return;
   }
   const rows = data.bars.map((b) => ({
-    time: chartTime(b.close_ts, S.symbol),
+    time: chartTime(b.close_ts, uid),
     open: b.open, high: b.high, low: b.low, close: b.close,
   }));
   cell.series.setData(rows);
@@ -1384,13 +1395,13 @@ async function loadCell(cell) {
   // 格子里**只画徽章**：成交胶囊在 1/9 屏宽里挤不下，那是单图的事。
   const shown = new Set(data.bars.map((b) => b.close_ts));
   cell.layer.setData({
-    symbol: S.symbol,
+    symbol: uid,
     groups: data.bars.length < MARKER_MIN_BARS ? []
       : (marks.markers || []).filter((m) => shown.has(m.bucket_ts)),
     fills: [], trades: [], selected: null,
   });
   const legend = drawOverlays(cell.chart, cell.series, data,
-    { maStore: "maSeries", volume: cell.volume, host: cell });
+    { maStore: "maSeries", volume: cell.volume, host: cell, symbol: uid });
   const last = data.bars.at(-1);
   // 均线值写进格子标题：小格子里挤不下图例，但不写就不知道哪条是哪条
   cell.head.innerHTML = `${num(last.close)}　`
@@ -1405,6 +1416,7 @@ async function loadGrid() {
   if (!S.symbol || !S.meta) return;
   const tfs = GRID_TFS;
   const cells = tfs.map(gridCell);
+  for (const c of cells) c.symbol = S.symbol;   // 周期模式：九格都是同一个标的
   delete $("#chart-note").dataset.base;   // 上一次锁定留下的后缀不该粘到新文案上
   $("#chart-note").textContent =
     `${shortSym(S.symbol)}　九宫格：${tfs.join(" / ")}　每格最多 ${GRID_BARS} 根`
@@ -1545,6 +1557,8 @@ async function togglePin(e) {
 async function loadWatchCell(cell) {
   cell.tf = G.wtf;
   const e = cell.entry;
+  // 先设身份，再走分支 —— 无数据那条是提前 return 的，设晚了这格就没有标的
+  cell.symbol = e.symbol;
   // **没有规则盯 ⇒ 盯盘进程不采集 ⇒ 图永远是空的。** 这条要当场说清楚，
   // 否则又是一个静默的空（这个项目在这上面栽过：用户以为是行情连不上）。
   if (!e.watched) {
@@ -1561,9 +1575,7 @@ async function loadWatchCell(cell) {
     empty.innerHTML = `没有规则盯 ${esc(shortSym(e.symbol))}<br>盯盘进程不采集它的行情`;
     return;
   }
-  const prev = S.symbol;
-  S.symbol = e.symbol;                 // loadCell 按 S.symbol 取数
-  try { await loadCell(cell); } finally { S.symbol = prev; }
+  await loadCell(cell);   // 标的已在函数开头设进 cell.symbol，不碰全局（见 loadCell）
   // **头部改写成最新价 + 当日涨跌**，覆盖掉 loadCell 写进去的均线图例。
   // 预警组的格子头部已经有标的名和钉图标，再塞两个均线值就会换行 ——
   // 这个坑在 chart-head 上踩过两次（价均线一次、量均线一次）。
