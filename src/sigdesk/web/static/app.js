@@ -19,7 +19,14 @@ const S = {
 /* ── 格式化 ─────────────────────────────────────── */
 
 const isCrypto = (uid) => uid.startsWith("CRYPTO");
-const shortSym = (uid) => uid.split(".").slice(-2).join(".");
+/* 显示用短名：**只留合约代码**，不带交易所。
+   规则是**去掉前两段（市场 + 交易所）**，剩下的原样保留：
+     CN.SHFE.ao2610        -> ao2610
+     CN.SHFE.rb.CONT       -> rb.CONT     （主连是四段，只取末段会丢掉品种）
+     CRYPTO.OKX.BTCUSDT.PERP -> BTCUSDT.PERP
+   交易所名对看盘没有信息量（合约代码本身就唯一），而 60 多个标的时它占的宽度
+   会把预警组格子头部和信号流挤到换行。完整 uid 仍在 title 属性与详情里。 */
+const shortSym = (uid) => uid.split(".").slice(2).join(".") || uid;
 
 function fmtTime(ts, uid, withDate = true) {
   if (!ts) return "—";

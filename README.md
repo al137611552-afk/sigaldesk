@@ -34,6 +34,7 @@
 | `report.py` | 终端版信号质量报告 |
 | `paper_run.py` | 纸上回测 |
 | `acceptance.py` | 离线验收（不需要凭据、不联网）|
+| `check_calendars.py` | **用真实成交时段核对交易日历**。换月/加品种/改日历后都该跑 |
 | `sync_symbols.py` | 从行情接口同步国内期货标的到 `symbols.yaml`（`--with-options` 只要有期权的品种）。**换月后重跑它**|
 | `make_package.py` | 打 Windows 测试包（装什么由 `git ls-files` 决定，所以 `.env`/数据库天然不进包）|
 | `crosscheck.py` / `crypto_live_check.py` / `replay_check.py` | 三个对拍验收 |

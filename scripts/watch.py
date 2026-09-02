@@ -187,9 +187,25 @@ def apply_history(
         missed = engine.resume(history)
         print(f"  重启补判：{len(history)} 根历史，补回 {len(missed)} 条停机期间的信号")
         return missed
+    # **一个标的的历史坏了不该拖垮整个进程。** 实测撞过：某个品种的交易日历归错
+    # （夜盘跨零点却归成"无夜盘"），它周五夜盘次日 00:xx 那根被算成周六的交易日，
+    # 日线聚合抛"时间倒流"，60 多个品种全都起不来。
+    # 与"行情源按市场降级"同一个原则：能跑的先跑起来，坏的**大声说出来**。
+    # 日历该用 scripts/check_calendars.py 核对，但那是预防，这里是兜底。
     derived: list[Bar] = []
+    broken: dict[str, str] = {}
     for bar in history:
-        derived.extend(store.push(bar))
+        if bar.symbol in broken:
+            continue                      # 这个标的已经坏了，后面的历史一并跳过
+        try:
+            derived.extend(store.push(bar))
+        except ValueError as e:
+            broken[bar.symbol] = str(e)
+    if broken:
+        print(f"⚠️  {len(broken)} 个标的的历史有问题，已跳过（其余照常）：")
+        for uid, why in broken.items():
+            print(f"      {uid}: {why}")
+        print("    多半是交易日历归错。核对：python scripts/check_calendars.py")
     engine.prime(derived)
     extra = len(derived) - len(history)
     print(f"  首次预热：{len(history)} 根 1m -> 派生 {extra} 根高周期，不发信号")

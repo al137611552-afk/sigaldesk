@@ -61,7 +61,7 @@ def test_trade_view_renders_account_positions_fills_and_rejects(
     banner = str(smoke["trade_banner_html"])
     assert "权益" in banner and "收益率" in banner and "手续费" in banner
     pos = str(smoke["trade_positions_html"])
-    assert "SHFE.rb2610" in pos and "空" in pos, "持仓方向要能看出多空"
+    assert "rb2610" in pos and "空" in pos, "持仓方向要能看出多空"
     fills = str(smoke["trade_fills_html"])
     assert "开仓" in fills and "止盈" in fills, "成交性质要翻成人话"
     assert "k1" in fills, "每笔成交要标明来源信号（成交与信号一一对应）"
@@ -86,7 +86,7 @@ def test_direction_is_drawn_as_svg_not_a_dingbat(smoke: dict[str, object]) -> No
 
 def test_feed_rows_carry_symbol_price_rule_and_time(smoke: dict[str, object]) -> None:
     html = str(smoke["feed_html"])
-    assert "SHFE.rb2610" in html
+    assert "rb2610" in html
     assert "3,120" in html
     assert "r1" in html
 
@@ -955,3 +955,18 @@ def test_reference_mas_are_drawn_as_steps() -> None:
     fn = fn[: fn.index("\n}\n")]
     assert "lineType: 1" in fn, "没画成阶梯线"
     assert "lineType: 2" not in fn, "曲线插值会在两次收盘之间显示未知的中间值"
+
+
+def test_short_symbol_drops_market_and_exchange() -> None:
+    """显示用短名只留合约代码，去掉市场与交易所。
+
+    交易所名对看盘没有信息量（合约代码本身就唯一），而 60 多个标的时它占的宽度
+    会把预警组格子头部和信号流挤到换行。
+
+    **主连是四段**（`CN.SHFE.rb.CONT`），只取末段会变成孤零零的 `CONT`、丢掉品种 ——
+    所以规则是"去掉前两段"，不是"取最后一段"。
+    """
+    js = pathlib.Path("src/sigdesk/web/static/app.js").read_text(encoding="utf-8")
+    line = next(ln for ln in js.splitlines() if ln.startswith("const shortSym"))
+    assert "slice(2)" in line, f"应当去掉前两段: {line}"
+    assert "slice(-1)" not in line and "[parts.length - 1]" not in line

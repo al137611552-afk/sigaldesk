@@ -9,26 +9,30 @@
 #
 # ⚠️ 上线前请与交易所官方休市公告核对一遍。交易所公告才是权威，
 #    且个别年份的夜盘暂停安排会与放假安排有出入。
+# **每个品种归哪一档，用真实成交时段验过，不靠记忆**（scripts/check_calendars.py）。
+# 归错是**静默的**，而且后果比想象的重：夜盘跨零点的品种若被归成"无夜盘"，
+# 它周五夜盘的次日 00:xx 那根会被算成周六的交易日 —— 日线聚合当场抛"时间倒流"，
+# 盯盘进程在首次喂历史时直接崩掉（实测 ad2611 撞上过）。
 calendars:
   # 黑色系 / 多数农产品：夜盘 21:00-23:00
   cn_night_23:
     sessions: ["09:00-10:15", "10:30-11:30", "13:30-15:00", "21:00-23:00"]
-    products: [rb, hc, i, j, jm, m, y, p, a, c, cs, SR, CF, TA, MA, FG, v, pp, l, eg, ru, OI, PL, PX, RM, SH, b, br, bu, bz, eb, fu, op, pg, sp]
+    products: [rb, hc, i, j, jm, m, y, p, a, c, cs, SR, CF, TA, MA, FG, v, pp, l, eg, ru, OI, PL, PX, RM, SH, b, br, bu, bz, eb, fu, op, pg, sp, PF, PR, SA]
 
   # 有色：夜盘 21:00-01:00（跨零点）
   cn_night_01:
     sessions: ["09:00-10:15", "10:30-11:30", "13:30-15:00", "21:00-01:00"]
-    products: [cu, al, zn, pb, ni, sn, ss, bc, ao]
+    products: [cu, al, zn, pb, ni, sn, ss, bc, ao, ad]
 
   # 贵金属 / 原油：夜盘 21:00-02:30（跨零点）
   cn_night_0230:
     sessions: ["09:00-10:15", "10:30-11:30", "13:30-15:00", "21:00-02:30"]
-    products: [au, ag, sc, pd, pt]
+    products: [au, ag, sc]
 
   # 无夜盘
   cn_no_night:
     sessions: ["09:00-10:15", "10:30-11:30", "13:30-15:00"]
-    products: [jd, lh, UR, SA, PF, si, lc, AP, CJ, PK, PR, SF, SM, ad, lg, ps]
+    products: [jd, lh, UR, si, lc, AP, CJ, PK, SF, SM, lg, ps, pd, pt]
 
   # 金融期货：日盘时段与商品不同，无夜盘
   cffex_index:

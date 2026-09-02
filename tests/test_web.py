@@ -799,3 +799,21 @@ def test_batch_backfill_degrades_per_symbol() -> None:
     assert "重跑本命令即可" in src, "要告诉用户失败之后怎么办"
     # 主连不补 —— 它是 build_continuous.py 拼出来的派生序列
     assert "reg.tradable()" in src and "主连" in src
+
+
+def test_history_degrades_per_symbol() -> None:
+    """**一个标的的历史坏了不该拖垮整个进程。**
+
+    实测撞过：`ad2611` 的交易日历归错（夜盘到 01:00 却归成"无夜盘"），
+    它周五夜盘次日 00:xx 那根被算成**周六**的交易日，日线聚合抛"时间倒流"，
+    结果 60 多个品种一个都起不来。
+
+    与"行情源按市场降级"同一个原则：能跑的先跑起来，坏的大声说出来 ——
+    而不是整体退出，让人对着一句 ValueError 猜是哪个品种。
+    """
+    src = pathlib.Path("scripts/watch.py").read_text(encoding="utf-8")
+    fn = src[src.index("    derived: list[Bar] = []"):src.index("    engine.prime(derived)")]
+    assert "except ValueError" in fn, "没有按标的降级"
+    assert "broken[bar.symbol]" in fn, "要记下是哪个标的坏了"
+    assert "if bar.symbol in broken" in fn, "坏了的标的后续历史要一并跳过"
+    assert "check_calendars.py" in src, "要指向核对工具，不能只说'有问题'"

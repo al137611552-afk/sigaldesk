@@ -86,7 +86,7 @@ symbols:
   market: CN
   exchange: CZCE
   code: PF610
-  calendar: cn_no_night
+  calendar: cn_night_23
   quote_code: PF610
   price_tick: 2
   multiplier: 5
@@ -113,7 +113,7 @@ symbols:
   market: CN
   exchange: CZCE
   code: PR611
-  calendar: cn_no_night
+  calendar: cn_night_23
   quote_code: PR611
   price_tick: 2
   multiplier: 15
@@ -140,7 +140,7 @@ symbols:
   market: CN
   exchange: CZCE
   code: SA701
-  calendar: cn_no_night
+  calendar: cn_night_23
   quote_code: SA701
   price_tick: 1
   multiplier: 20
@@ -212,7 +212,7 @@ symbols:
   market: CN
   exchange: SHFE
   code: ad2611
-  calendar: cn_no_night
+  calendar: cn_night_01
   quote_code: ad2611
   price_tick: 5
   multiplier: 10
@@ -455,7 +455,7 @@ symbols:
   market: CN
   exchange: GFEX
   code: pd2610
-  calendar: cn_night_0230
+  calendar: cn_no_night
   quote_code: pd2610
   price_tick: 0.05
   multiplier: 1000
@@ -491,7 +491,7 @@ symbols:
   market: CN
   exchange: GFEX
   code: pt2610
-  calendar: cn_night_0230
+  calendar: cn_no_night
   quote_code: pt2610
   price_tick: 0.05
   multiplier: 1000
