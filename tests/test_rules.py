@@ -441,3 +441,16 @@ def test_confirm_on_close_must_be_a_real_bool() -> None:
     """bool("false") 是 True —— 不能用 bool() 兜，否则写错的人以为自己关掉了。"""
     with pytest.raises(RuleError, match="必须是布尔值"):
         load_rule(rule_yaml(emit={"confirm_on_close": "false"}))
+
+
+def test_unknown_priority_is_rejected() -> None:
+    """档位收成枚举。原来 loader 直接 ``str(...)``，把 high 敲成 higth 照收不误，
+    静默多出一个谁也没定义的档位 —— 排序时它既不高也不低，表现是"这条规则的信号
+    偶尔莫名被别的盖住"，且没有任何报错。宁可拒绝启动。"""
+    with pytest.raises(RuleError, match="priority"):
+        load_rule(rule_yaml(emit={"priority": "higth"}))
+
+
+def test_known_priorities_load() -> None:
+    for name in ("high", "normal", "low"):
+        assert str(load_rule(rule_yaml(emit={"priority": name})).emit.priority) == name

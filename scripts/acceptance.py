@@ -222,7 +222,7 @@ def group_api(tmp: pathlib.Path) -> None:
         check("API", "下拉框含主连并标注",
               any(s["uid"].endswith(".CONT") and s["is_continuous"] for s in meta["symbols"]))
 
-        for path in ("/api/health", "/api/signals", "/api/stats", "/api/chains", "/api/trade"):
+        for path in ("/api/health", "/api/signals", "/api/stats", "/api/trade"):
             check("API", path, _get(base + path)[0] == 200)
 
         for tf, least in (("1m", 10000), ("1h", 300), ("1d", 50)):

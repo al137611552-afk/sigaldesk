@@ -36,6 +36,7 @@ ENV = load_env(ROOT)
 # 含日线：日线按**交易日**聚合（夜盘归属下一交易日），不是自然日。
 # 注意 aggregate_complete 会 flush 末桶，所以回补区间必须是完整闭合的
 # —— by-timerange 不含当日，天然满足。
+CHUNK_DAYS = 7   # 单次 by-timerange 的最大跨度，再大就会读超时
 DERIVED = [Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1, Timeframe.H4,
            Timeframe.D1, Timeframe.W1, Timeframe.MON1]
 
@@ -63,10 +64,22 @@ async def main(uid: str, start: str, end: str) -> int:
         return 2
 
     now = int(dt.datetime.now(dt.UTC).timestamp())
+    # **按周分段拉**：by-timerange 跨度一大就会读超时（实测两个月必挂、一周稳过），
+    # 而超时是在流读取阶段抛的，看起来像"连不上"，非常误导。
+    # 分段是幂等的：同一根 bar 重复拿到只是覆盖。
+    rows: list[dict[str, object]] = []
     async with QuoteApiClient(cfg) as client:
-        rows = await client.kline_by_timerange(
-            sym.quote_code, Timeframe.M1, _day_ts(start), _day_ts(end, end=True)
-        )
+        cur = dt.date.fromisoformat(start)
+        last = dt.date.fromisoformat(end)
+        while cur <= last:
+            stop = min(cur + dt.timedelta(days=CHUNK_DAYS - 1), last)
+            got = await client.kline_by_timerange(
+                sym.quote_code, Timeframe.M1,
+                _day_ts(cur.isoformat()), _day_ts(stop.isoformat(), end=True),
+            )
+            rows.extend(got)
+            print(f"    {cur} ~ {stop}: {len(got)} 行")
+            cur = stop + dt.timedelta(days=1)
     if not rows:
         print("无数据。注意 by-timerange 不含当日；请确认区间不是只覆盖今天。")
         return 1

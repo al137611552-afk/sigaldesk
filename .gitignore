@@ -15,3 +15,5 @@ acceptance-log.txt
 *.zip
 .ruff_cache/
 .mypy_cache/
+# 设计画布的播种产物（2~3 MB，由同目录的 .dc.html 重新生成）
+docs/design/*/[a-z]*-*.html

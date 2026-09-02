@@ -34,10 +34,6 @@
 
   <!-- ── 盯盘 ───────────────────────────────────── -->
   <section id="view-live" class="view active">
-    <div id="chains" class="chains" hidden>
-      <div class="chains-head"><b>规则链路状态</b><span id="chains-sum" class="lbl"></span></div>
-      <div id="chain-grid" class="chain-grid"></div>
-    </div>
 
     <div class="live-body">
       <div class="chart-pane">
@@ -47,9 +43,13 @@
           <span class="spacer"></span>
           <select id="c-symbol"></select>
           <div id="tf-group" class="tf-group"></div>
+          <!-- 网格的两种模式：一标的×九周期（原有）／九标的×一周期（预警组）。
+               同一个网格组件，十字线同步、均线、成交量、双击放大全部复用。 -->
+          <div id="grid-mode" class="tf-group" hidden></div>
           <button id="grid-toggle" type="button"
             title="九宫格：同一标的的 9 个周期同屏">九宫格</button>
         </div>
+        <div id="wl-tabs" class="wl-tabs" hidden></div>
         <div id="chart"><div id="ma-legend" class="ma-legend"></div></div>
         <div id="grid" class="grid" hidden></div>
         <p id="chart-note" class="chart-note"></p>

@@ -62,6 +62,9 @@ def main() -> int:
         live=False,
         rules_dir=args.rules_dir,
         edit_enabled=bool(args.allow_edit),
+        # 钉住会让盯盘进程多采集一个标的，面板又没有鉴权 ——
+        # 绑在回环之外时禁用它（见 ServiceState.local_only）
+        local_only=args.host in ("127.0.0.1", "::1", "localhost"),
     )
     print(f"只读面板: http://{args.host}:{args.port}")
     print(f"  规则   {args.rules_dir}" + ("（可编辑 + 可试算）" if args.allow_edit else "（只读）"))

@@ -13,7 +13,7 @@ const $$ = (s) => Array.from(document.querySelectorAll(s));
 
 const S = {
   meta: null, signals: [], selected: null, symbol: null, timeframe: "5m",
-  chart: null, series: null, bars: [], chains: [],
+  chart: null, series: null, bars: [],
 };
 
 /* ── 格式化 ─────────────────────────────────────── */
@@ -102,66 +102,6 @@ const setBadge = (sel, text, kind) => {
   el.className = "badge" + (kind ? " " + kind : "");
 };
 
-/* ── 链路状态条 ─────────────────────────────────── */
-
-const PHASE = {
-  armed: { label: "已布防", color: "#d29922", cls: "armed" },
-  progressing: { label: "推进中", color: "#58a6ff", cls: "" },
-  cooldown: { label: "冷却中", color: "#8b949e", cls: "cooldown" },
-  idle: { label: "空闲", color: "#8b949e", cls: "" },
-};
-
-function chainNote(c) {
-  if (c.phase === "armed" && c.ttl_bars) {
-    return `TTL ${c.ttl_left}/${c.ttl_bars} 根 · 布防于 ${hhmm(c.armed_at, c.symbol)}`;
-  }
-  if (c.phase === "cooldown") {
-    const left = Math.max(0, c.cooldown_until - Math.floor(Date.now() / 1000));
-    return `上次触发 ${hhmm(c.last_fired_ts, c.symbol)} · 剩余 ${Math.floor(left / 60)}m${left % 60}s`;
-  }
-  const pending = c.steps.find((s) => !s.done);
-  return pending ? `等待 ${pending.role} ${pending.timeframe} 成立` : "链路已走完";
-}
-
-function renderChains() {
-  const box = $("#chains");
-  if (!S.chains.length) { box.hidden = true; return; }
-  box.hidden = false;
-  const armed = S.chains.filter((c) => c.phase === "armed").length;
-  $("#chains-sum").textContent =
-    `${new Set(S.chains.map((c) => c.symbol)).size} 个标的 · ` +
-    `${new Set(S.chains.map((c) => c.rule_id)).size} 条规则 · ${armed} 个已布防`;
-
-  $("#chain-grid").innerHTML = S.chains.map((c) => {
-    const ph = PHASE[c.phase] || PHASE.idle;
-    const steps = c.steps.map((st, i) => {
-      const waiting = !st.done && i === c.stage;
-      const stroke = st.done ? "#26a69a" : waiting ? "#d29922" : "#262c36";
-      const fill = st.done ? "#26a69a" : "#0e1116";
-      return `<div class="step">
-        <div class="step-line">
-          <i class="${i > 0 && c.steps[i - 1].done ? "on" : ""}"></i>
-          <svg class="step-dot" viewBox="0 0 12 12"><circle cx="6" cy="6" r="5"
-            fill="${fill}" stroke="${stroke}" stroke-width="1.5"></circle></svg>
-          <i class="${st.done ? "on" : ""}"></i>
-        </div>
-        <div class="step-cap ${st.done || waiting ? "on" : ""}">${esc(st.role)} ${esc(st.timeframe)}
-          <br><span class="mono dim">${st.done ? hhmm(st.last_ts, c.symbol) : waiting ? "等待中" : "—"}</span>
-        </div></div>`;
-    }).join("");
-    return `<div class="chain ${ph.cls}">
-      <div class="chain-top">
-        <span class="sym mono">${esc(shortSym(c.symbol))}</span>
-        <span class="chain-phase" style="color:${ph.color}"><i class="dot"></i>${ph.label}</span>
-      </div>
-      <div class="steps">${steps}</div>
-      <div class="chain-note mono">${esc(chainNote(c))}</div>
-    </div>`;
-  }).join("");
-}
-
-/* ── 信号流 ─────────────────────────────────────── */
-
 function filtered() {
   const rule = $("#f-rule").value, sym = $("#f-symbol").value;
   return S.signals.filter((s) => (!rule || s.rule_id === rule) && (!sym || s.symbol === sym));
@@ -184,6 +124,9 @@ function renderFeed() {
   }
   const sel = S.selected && rows.find((s) => s.dedup_key === S.selected.dedup_key)
     ? S.selected : rows[0];
+  // 记下**当前展示的是哪一条**。没点过任何一条时默认展示第一条，但那时 S.selected
+  // 仍是 null —— drawMarkers 拿分组回来后要重画详情，只看 S.selected 会把它清空。
+  S.shown = sel;
   renderDetail(sel);
   box.innerHTML = rows.filter((s) => s.dedup_key !== sel.dedup_key).map((s) => `
     <div class="sig" data-key="${esc(s.dedup_key)}">
@@ -203,6 +146,7 @@ function renderFeed() {
 function renderDetail(s) {
   const box = $("#detail");
   if (!s) { box.innerHTML = ""; return; }
+  S.shown = s;
   const rule = (S.meta?.rules || []).find((r) => r.id === s.rule_id);
   const ctx = s.context || {};
   // 规则可能已经下线（历史信号仍在库里），那时拿不到层级定义与 when 表达式。
@@ -227,8 +171,31 @@ function renderDetail(s) {
       <span class="detail-price mono ${DIR[s.direction]?.cls || ""}">${num(s.trigger_price)}</span></div>
     <div class="detail-sub"><span class="lbl">${esc(s.rule_id)}</span>
       <span class="mono lbl" style="margin-left:auto">${fmtTime(s.fired_at, s.symbol)}</span></div>
+    ${siblingsHtml(s)}
     ${evidence ? `<hr>${evidence}` : ""}
     ${foot ? `<div class="detail-foot">${foot}</div>` : ""}`;
+  $$("#detail .sib").forEach((el) => {
+    el.onclick = () => {
+      const hit = S.signals.find((x) => x.dedup_key === el.dataset.key);
+      if (hit) select(hit);
+    };
+  });
+}
+
+/* 折叠标记的展开面板：图上「×3」只画得下一枚代表，另外两条得在这里点得到。
+   缺了它，折叠就等于把信号藏起来了 —— 那比不折叠更糟。
+   分组用服务端的结果（S.groups），不在前端重算分桶：两处各算一套迟早算出两种归属。 */
+function siblingsHtml(s) {
+  const g = (S.groups || []).find(
+    (m) => (m.members || []).some((x) => x.dedup_key === s.dedup_key));
+  if (!g || g.count < 2) return "";
+  const rows = g.members.map((m) => `
+    <div class="sib${m.dedup_key === s.dedup_key ? " on" : ""}" data-key="${esc(m.dedup_key)}">
+      <span class="rule">${esc(m.rule_id)}</span>
+      <span class="mono lbl">${esc(m.timeframe || "")}</span>
+      <span class="mono">${num(m.trigger_price)}</span></div>`).join("");
+  return `<div class="sibs"><div class="lbl">同一根 bar 上共 ${g.count} 条${
+    g.direction === s.direction ? "" : ""}（图上折成 ×${g.count}）</div>${rows}</div>`;
 }
 
 async function select(s) {
@@ -263,6 +230,10 @@ function ensureChart() {
     upColor: "#26a69a", downColor: "#ef5350", borderVisible: false,
     wickUpColor: "#26a69a", wickDownColor: "#ef5350",
   });
+  // 买卖点走自绘层，不用内置 setMarkers —— 内置的位置只能贴 bar 上/下方，
+  // 徽章因此不在价格上（见 createMarkerLayer 开头）。
+  S.markerLayer = createMarkerLayer();
+  S.series.attachPrimitive(S.markerLayer);
   S.chart.priceScale("right").applyOptions({ scaleMargins: { top: 0.06, bottom: 0.26 } });
   S.maSeries = [];
   S.chart.subscribeCrosshairMove((p) => {
@@ -309,7 +280,10 @@ async function loadChart(centerTs) {
   S.bars = data.bars;
   $("#chart-sym").textContent = `${shortSym(S.symbol)} · ${tf}`;
   if (!data.bars.length) {
-    S.series.setData([]); S.series.setMarkers([]); renderOhlc(null);
+    S.series.setData([]); renderOhlc(null);
+    // 自绘层也要清，否则上一个标的的标记会留在空图上
+    S.markerLayer.setData({ groups: [], fills: [], trades: [], selected: null });
+    S.trades = []; S.groups = [];
     // 空状态必须说清楚**为什么**空。只说"没有数据"，用户只会以为是连不上（真发生过）。
     const meta = (S.meta?.symbols || []).find((x) => x.uid === S.symbol);
     const msg = meta && meta.watched === false
@@ -454,34 +428,235 @@ const MARK = {
   neutral: { text: "", position: "belowBar" },
 };
 
-function signalMarker(m) {
-  const dir = DIR[m.direction] ? m.direction : "neutral";
-  const mk = MARK[dir];
-  return {
-    time: chartTime(m.bucket_ts, S.symbol),
-    position: mk.position,
-    color: DIR[dir].color,
-    shape: "circle",
-    size: 1.4,
-    text: mk.text,
-    id: m.dedup_key,
-  };
+/* 盈亏文字。**算不出来给空串，不给 0%** —— 独立只读模式拿不到合约乘数，
+   名义本金无从算起；显示 0% 会被读成"这笔白做了"，与"不知道"是两回事。
+   （这个项目已经在"算不出来显示成 0"上栽过好几次。） */
+function pnlText(trades, key) {
+  const t = (trades || []).find((x) => x.signal_key === key);
+  if (!t || t.pnl_pct === null || t.pnl_pct === undefined) return "";
+  return `${t.pnl_pct >= 0 ? "+" : ""}${t.pnl_pct.toFixed(2)}%`;
 }
 
-function fillMarker(f, labelled) {
-  const k = FILL[f.kind] || FILL.horizon;
+
+/* ── 买卖点自绘层 ─────────────────────────────────
+ *
+ * lightweight-charts 的内置 `setMarkers` 表达能力只有：4 种形状、一个颜色、
+ * 一段**没有底片的纯文字**，位置只能是 aboveBar / belowBar / inBar。
+ * 两个后果，都是用户当场指出来的：
+ *
+ *   1. **徽章不在价格上** —— 它贴的是那根 bar 的最高/最低点，不是触发价、
+ *      也不是成交价。换了形状和文字也还是"跟之前一样"。
+ *   2. 设计稿（docs/design/markers，方案 B+C）里的胶囊底片、半透明交易带、
+ *      盈亏 chip 全都无从表达；没有底片的文字会被烛身吃掉。
+ *
+ * series primitive 拿得到 priceToCoordinate / timeToCoordinate，两件事一起解决：
+ * 所有几何都锚在**真实价格**上，底片和色块自己画。
+ *
+ * 纯绘制、无状态副作用：喂什么画什么，因此可以在冒烟里用假 canvas 录下每一笔。 */
+
+const BG = "#0e1116";           // 面板底色，胶囊底片用它才压得住 K 线
+const INK = "#0e1116";          // 实心徽章上的字
+const MONO = '11px ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+
+function roundRect(ctx, x, y, w, h, r) {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+}
+
+/* 胶囊：底片 + 描边 + 文字。**底片是关键** —— 没有它，文字落在烛身上就没了，
+   那正是内置 marker 的老问题。 */
+function pill(ctx, x, y, text, color, rects, anchorY, width) {
+  ctx.font = MONO;
+  const w = ctx.measureText(text).width + 14;
+  const h = 18;
+  // 夹在画布里：贴边的胶囊会被切掉半个数字，读出来是错的价
+  const cx = width ? Math.min(Math.max(x, w / 2 + 2), width - w / 2 - 2) : x;
+  const box = { x: cx - w / 2, y: y - h / 2, w, h };
+  // 与已画的胶囊相撞就退化成只留锚点：密集处宁可少几个价格，也不要糊成一团。
+  if (rects.some((r) => box.x < r.x + r.w && box.x + box.w > r.x
+                     && box.y < r.y + r.h && box.y + box.h > r.y)) return false;
+  rects.push(box);
+  // 引线：胶囊被推开之后得有东西把它和锚点连回去，否则读者对不上这是谁的价
+  if (anchorY !== undefined && Math.abs(anchorY - y) > h / 2 + 2) {
+    ctx.strokeStyle = withAlpha(color, 0.55);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x, anchorY);
+    ctx.lineTo(cx, y + (anchorY > y ? h / 2 : -h / 2));
+    ctx.stroke();
+  }
+  ctx.fillStyle = BG;
+  roundRect(ctx, box.x, box.y, w, h, 5);
+  ctx.fill();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  roundRect(ctx, box.x + 0.5, box.y + 0.5, w - 1, h - 1, 5);
+  ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, cx, y + 0.5);
+  return true;
+}
+
+function withAlpha(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+function createMarkerLayer() {
+  const state = { groups: [], fills: [], trades: [], selected: null, symbol: null };
+  let series = null;
+  let chart = null;
+  const ops = [];   // 冒烟用：记下画了什么、画在哪（见 ops()）
+
+  let repaint = () => {};
+  const px = (t) => chart && chart.timeScale().timeToCoordinate(t);
+  const py = (p) => series && series.priceToCoordinate(p);
+
+  function draw(ctx, width) {
+    ops.length = 0;
+    const rects = [];
+    /* **视窗外的一律不画。**
+       timeToCoordinate 对"在数据里、但滚出屏幕"的时刻仍会给出坐标（负数或超宽），
+       照画就会在两侧边缘堆出一列根本不在视野里的胶囊 —— 试过，比不画难看得多，
+       而且那些价格属于别的时段，读者会当成当前这段的。 */
+    const onScreen = (x) => x !== null && x >= -2 && (!width || x <= width + 2);
+    const ts = state.trades || [];
+
+    // ① 交易带铺在最底下：半透明色块 + 虚线连接 + 两端锚点 + 盈亏 chip
+    for (const t of ts) {
+      if (!t.exit) continue;              // 持仓中：还没有终点，画线就是编造
+      const x1 = px(chartTime(t.entry.bucket_ts, state.symbol));
+      const x2 = px(chartTime(t.exit.bucket_ts, state.symbol));
+      const y1 = py(t.entry.price);
+      const y2 = py(t.exit.price);
+      if (y1 === null || y2 === null || x1 === null || x2 === null) continue;
+      if (!onScreen(x1) && !onScreen(x2)) continue;   // 整笔都在视窗外
+      if (x2 <= x1) continue;
+      const color = t.pnl_pct === null || t.pnl_pct === undefined ? DIR.neutral.color
+                  : (t.pnl_pct >= 0 ? DIR.long.color : DIR.short.color);
+      // 价差小的时候色块会细到看不见，给个最小高度
+      const h = Math.max(Math.abs(y2 - y1), 12);
+      const top = Math.min(y1, y2) - (h - Math.abs(y2 - y1)) / 2;
+      ctx.fillStyle = withAlpha(color, 0.13);
+      ctx.fillRect(x1, top, x2 - x1, h);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      for (const [x, y] of [[x1, y1], [x2, y2]]) {
+        ctx.beginPath();
+        ctx.arc(x, y, 3.5, 0, Math.PI * 2);
+        ctx.fillStyle = BG;
+        ctx.fill();
+        ctx.strokeStyle = color;
+        ctx.stroke();
+      }
+      ops.push(`band|${x1.toFixed(1)},${y1.toFixed(1)}|${x2.toFixed(1)},${y2.toFixed(1)}|${color}`);
+    }
+
+    // 徽章的占位**先登记**：信号画在最上层，但胶囊要躲开它 ——
+    // 不先占位的话，胶囊会画在徽章底下被盖掉一半（真图上就是这样）。
+    const badges = [];
+    for (const m of state.groups || []) {
+      const x = px(chartTime(m.bucket_ts, state.symbol));
+      const y = py(m.trigger_price);
+      if (y === null) continue;
+      const w = (m.count || 1) > 1 ? 44 : 20;
+      if (!onScreen(x)) continue;
+      const box = { x: x - w / 2, y: y - 11, w, h: 22 };
+      rects.push(box);
+      badges.push({ m, x, y });
+    }
+
+    // ② 成交胶囊，锚在**成交价**上：开仓写价格，离场写盈亏
+    for (const f of state.fills || []) {
+      const k = FILL[f.kind] || FILL.horizon;
+      const x = px(chartTime(f.bucket_ts, state.symbol));
+      const y = py(f.price);
+      if (y === null || !onScreen(x)) continue;
+      const mine = state.selected && f.signal_key === state.selected.dedup_key;
+      const pnl = f.kind === "entry" ? "" : pnlText(ts, f.signal_key);
+      const text = mine ? `${k.label} ${num(f.price)}${pnl ? ` ${pnl}` : ""}`
+                        : (f.kind === "entry" ? num(f.price) : (pnl || num(f.price)));
+      // 锚点永远画（它才是"成交发生在这个价"的证据），胶囊撞了可以不画
+      ctx.fillStyle = k.color;
+      ctx.fillRect(x - 3, y - 3, 6, 6);
+      // **开仓向下、离场向上**：一笔交易的两端分到锚点两侧，天然不会互相压。
+      // 撞了就一层层往外让，本侧让不开再翻到另一侧 —— 五次都撞才退化成只留锚点。
+      // 多试几次是有理由的：退化掉的往往是**盈亏**，而丢盈亏比丢价格亏得多。
+      const side = f.kind === "entry" ? 1 : -1;
+      const shown = [20, 40, 60, -20, -40].some(
+        (d) => pill(ctx, x, y + side * d, text, k.color, rects, y, width));
+      ops.push(`fill|${f.kind}|${x.toFixed(1)},${y.toFixed(1)}|${text}|${shown ? "pill" : "dot"}`);
+    }
+
+    // ③ 信号徽章画在最上层，锚在**触发价**上
+    for (const { m, x, y } of badges) {
+      const dir = DIR[m.direction] ? m.direction : "neutral";
+      const color = DIR[dir].color;
+      const letter = dir === "long" ? "B" : dir === "short" ? "S" : "";
+      const n = m.count || 1;
+      const label = n > 1 ? `${letter || "·"}×${n}` : letter;
+      const on = state.selected
+        && m.members.some((v) => v.dedup_key === state.selected.dedup_key);
+      ctx.font = `700 ${MONO}`;
+      if (n > 1) {
+        const w = ctx.measureText(label).width + 12;
+        ctx.fillStyle = color;
+        roundRect(ctx, x - w / 2, y - 9, w, 18, 9);
+        ctx.fill();
+      } else {
+        ctx.beginPath();
+        ctx.arc(x, y, 9, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+      }
+      if (on) {                       // 选中：外圈加一道环，不改变位置
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(x, y, 13, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      if (label) {
+        ctx.fillStyle = INK;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(label, x, y + 0.5);
+      }
+      ops.push(`signal|${m.direction}|${x.toFixed(1)},${y.toFixed(1)}|${label}|${n}`);
+    }
+  }
+
   return {
-    time: chartTime(f.bucket_ts, S.symbol),
-    position: f.side === "sell" ? "aboveBar" : "belowBar",
-    color: k.color,
-    shape: k.shape === "arrow"
-      ? (f.side === "sell" ? "arrowDown" : "arrowUp")
-      : k.shape,
-    // **只给选中信号的成交写价格**。几十笔成交挤在几百根 bar 里，
-    // 全都写字就会叠成一团互相遮蔽 —— 信号标注当初不写文字就是这个原因。
-    // 常态只画点表示"这里有成交"，选中某条信号后它那几笔才显示价格。
-    text: labelled ? `${k.label} ${num(f.price)}` : "",
-    id: `fill:${f.signal_key}:${f.ts}:${f.kind}`,
+    attached(p) { series = p.series; chart = p.chart; repaint = p.requestUpdate || (() => {}); },
+    detached() { series = null; chart = null; },
+    updateAllViews() {},
+    paneViews() {
+      return [{
+        zOrder: () => "top",
+        renderer: () => ({
+          draw: (target) => target.useMediaCoordinateSpace(
+            ({ context, mediaSize }) => draw(context, mediaSize && mediaSize.width)),
+        }),
+      }];
+    },
+    setData(next) { Object.assign(state, next); repaint(); },
+    // 冒烟读它来断言"徽章画在触发价上"。挂返回值上而不是全局：
+    // 九宫格有九层，全局只留得下最后一层。
+    ops: () => ops.slice(),
   };
 }
 
@@ -510,18 +685,26 @@ async function drawMarkers(tf, base) {
   const d = await api(`/api/markers?symbol=${encodeURIComponent(S.symbol)}&timeframe=${tf}`);
   const fills = d.fills || [];
   const picked = S.selected?.dedup_key;
-  S.series.setMarkers([
-    ...d.markers.map(signalMarker),
-    ...fills.map((f) => fillMarker(f, f.signal_key === picked)),
-  ].sort((a, b) => a.time - b.time));
+  S.trades = d.trades || [];
+  S.groups = d.markers || [];
+  S.markerLayer.setData({
+    groups: S.groups, fills, trades: S.trades,
+    selected: S.selected, symbol: S.symbol,
+  });
   drawPriceLines(S.selected, fills);
+  renderDetail(S.shown);   // 同根 bar 的兄弟信号要等分组回来才知道
   const extra = d.dropped.length ? `　⚠️ ${d.dropped.length} 条不在本周期序列内` : "";
-  const mine = picked ? fills.filter((f) => f.signal_key === picked).length : 0;
-  const traded = fills.length
-    ? `　成交 ${fills.length} 笔` + (picked ? `（选中这条 ${mine} 笔，已标价）` : "（点信号看成交价）")
-    : "";
+  // 折叠后标记枚数 < 信号条数是**正常**的，得说清楚差额去哪了，
+  // 否则"标注 12/37"会被读成"25 条丢了"。
+  const stacked = S.groups.filter((m) => m.count > 1).length;
+  const folded = stacked ? `（${stacked} 处叠了多条，已折成 ×N）` : "";
+  const open = S.trades.filter((t) => t.open).length;
+  // 持仓中的不画连线（没有终点），得说清楚，否则会被当成漏画。
+  const traded = S.trades.length
+    ? `　交易 ${S.trades.length} 笔` + (open ? `（${open} 笔持仓中未画连线）` : "")
+    : (fills.length ? `　成交 ${fills.length} 笔` : "");
   $("#chart-note").textContent =
-    `${base}　标注 ${d.markers.length}/${d.signals} 条${traded}${extra}`;
+    `${base}　标注 ${S.groups.length} 枚 / 信号 ${d.signals} 条${folded}${traded}${extra}`;
 }
 
 /* ── 质量统计 ───────────────────────────────────── */
@@ -924,19 +1107,48 @@ const MA_COLORS = ["#e6c07b", "#61afef", "#c678dd", "#98c379", "#e06c75", "#56b6
 const VOLUME_SCALE = "vol";
 const MARKER_MIN_BARS = 20;   // 少于这么多根就不画标注（会被撑得巨大）
 const G = {
-  cells: new Map(), on: false, zoomed: null,
+  cells: new Map(), wcells: new Map(), on: false, zoomed: null,
+  // 网格的两种模式。**同一套组件**：两处各画一套的话，同一条信号在
+  // 单图和格子里会落在不同高度，那是最容易被读错又不会报错的不一致。
+  mode: "watch",          // "watch" = 九标的×一周期；"tf" = 一标的×九周期
+  market: "CN",           // 预警组按市场分组：加密信号不该挤掉你钉着的螺纹
+  wtf: "5m",              // 预警组整组一个周期。默认 5m —— 找买点的级别
+  wl: null,               // 最近一次 /api/watchlist 的返回
+  seen: new Set(),        // 已读的信号 dedup_key（本地，见 loadSeen）
+  slots: [],              // 预警组里的空槽元素，自己记着好清理
+
   pinned: null,     // 被 shift+单击锁定的时刻；不为空时十字线不跟鼠标走
   syncing: false,   // **防回环**：程序设置十字线会再次触发 crosshairMove 回调
 };
 
-function gridCell(tf) {
-  let cell = G.cells.get(tf);
+/* 已读状态存本地：它是"我这个人看没看过"，不是账本上的事实，
+   没必要占服务端一张表；换台机器重新标一遍也无所谓。 */
+const SEEN_KEY = "sigdesk.watchlist.seen";
+function loadSeen() {
+  try { G.seen = new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || "[]")); }
+  catch { G.seen = new Set(); }
+}
+function markSeen(key) {
+  if (!key || G.seen.has(key)) return;
+  G.seen.add(key);
+  // 只留最近 500 条：已读集合会随信号数无限长大，而老信号早就不在组里了
+  const keep = [...G.seen].slice(-500);
+  G.seen = new Set(keep);
+  try { localStorage.setItem(SEEN_KEY, JSON.stringify(keep)); } catch { /* 无痕模式 */ }
+}
+
+/* 一个格子。两种模式**共用这一个构造函数** —— 图表机制（十字线同步、均线、
+   成交量、双击放大、自绘标记层）完全相同，不同的只有格子头部长什么样、
+   以及格子的身份是"周期"还是"标的"。
+   两处各建一套的话，同一条信号在两种模式下会落在不同高度，
+   那是最容易被读错、又不会报错的一种不一致。 */
+function makeCell(map, key, tf, headHtml) {
+  let cell = map.get(key);
   if (cell) return cell;
   const root = document.createElement("div");
   root.className = "cell";
-  root.innerHTML = `<div class="cell-head"><span class="cell-tf mono">${esc(tf)}</span>
-      <span class="ohlc mono"></span></div>
-    <div class="cell-body"></div><span class="zoom">双击放大 / 还原　Esc 返回</span>`;
+  root.innerHTML = headHtml
+    + `<div class="cell-body"></div><span class="zoom">双击放大 / 还原　Esc 返回</span>`;
   $("#grid").appendChild(root);
   const body = root.querySelector(".cell-body");
   const chart = LightweightCharts.createChart(body, {
@@ -976,16 +1188,19 @@ function gridCell(tf) {
   }
   // **双击**放大，不是单击：单击要留给"停在这一格上看十字线、对比多周期"，
   // 单击就放大等于根本没法在小格里看盘（用户实际用起来第一件事就撞上）。
-  root.ondblclick = () => zoomCell(tf);
+  root.ondblclick = () => zoomCell(key);
   // points 存这一格的 (time, close)，供跨周期对齐十字线用
-  cell = { tf, root, body, chart, series, avg, volume, points: [], maSeries: [],
+  // 分时那格没有信号标记（它是折线，不走 /api/markers），其余每格挂一层
+  const layer = isIntraday ? null : createMarkerLayer();
+  if (layer) series.attachPrimitive(layer);
+  cell = { key, tf, root, body, chart, series, avg, volume, layer, points: [], maSeries: [],
            head: root.querySelector(".ohlc") };
   // 悬停即同步：在任意一格移动，其余八格显示**同一时刻**的十字线。
   // 这正是"看大做小"要的 —— 一眼看清同一刻各级别长什么样。
   chart.subscribeCrosshairMove((param) => {
     if (G.syncing) return;              // 防回环：下面的 setCrosshairPosition 会再触发本回调
     if (G.pinned !== null) return;      // 已锁定就别被鼠标带跑
-    syncCrosshair(param.time ?? null, tf);
+    syncCrosshair(param.time ?? null, key);
   });
   // shift + 单击 = 锁定这一刻（再点一次或按 Esc 解除）。
   // 不用普通单击：普通单击要留给"随便点点不触发任何东西"。
@@ -997,10 +1212,43 @@ function gridCell(tf) {
     else syncCrosshair(G.pinned, null);
     renderPinBadge();
   });
-  G.cells.set(tf, cell);
+  map.set(key, cell);
   new ResizeObserver(() => fitCell(cell)).observe(body);
   return cell;
 }
+
+/* 模式一：一个标的的九个周期。格子的身份是周期。 */
+function gridCell(tf) {
+  return makeCell(G.cells, tf, tf,
+    `<div class="cell-head"><span class="cell-tf mono">${esc(tf)}</span>
+       <span class="ohlc mono"></span></div>`);
+}
+
+/* 模式二（预警组）：九个标的、同一个周期。格子的身份是标的。
+   头部比周期模式多两样：**钉图标**（人工判断「还需要观察」的唯一表达）
+   和**触发理由那一行**（它为什么在这个组里 —— 不写就是一堆无差别的缩略图）。 */
+function watchCell(uid) {
+  const cell = makeCell(G.wcells, uid, G.wtf,
+    `<div class="cell-head">
+       <span class="cell-mark"></span>
+       <span class="cell-tf mono"></span>
+       <button class="cell-pin" type="button" title="钉住：不会被新信号挤掉">${PIN_SVG}</button>
+       <span class="ohlc mono"></span></div>
+     <div class="cell-why"><span class="rule"></span><span class="lbl ago"></span></div>`);
+  if (!cell.name) {
+    cell.name = cell.root.querySelector(".cell-tf");
+    cell.mark = cell.root.querySelector(".cell-mark");
+    cell.pin = cell.root.querySelector(".cell-pin");
+    cell.why = cell.root.querySelector(".cell-why .rule");
+    cell.ago = cell.root.querySelector(".cell-why .ago");
+  }
+  return cell;
+}
+
+const PIN_SVG = `<svg width="11" height="11" viewBox="0 0 16 16" fill="none"
+  stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+  ><path d="M9.5 1.5 L14.5 6.5 L12 7 L8.5 10.5 L8 13.5 L2.5 8 L5.5 7.5 L9 4 Z"></path
+  ><line x1="2.5" y1="13.5" x2="6" y2="10"></line></svg>`;
 
 /* 把某个时刻同步到所有格子。
  * **跨周期要对齐到"包含该时刻的那根 bar"** —— 1m 上的 10:03 在 1d 上不是一根 bar，
@@ -1098,7 +1346,8 @@ async function loadCell(cell) {
     empty.textContent = `没有 ${cell.tf} 数据`;
     empty.textContent = `没有 ${cell.tf} 数据`;
     cell.body.appendChild(empty);
-    cell.series.setData([]); cell.series.setMarkers([]);
+    cell.series.setData([]);
+    cell.layer?.setData({ groups: [], fills: [], trades: [], selected: null });
     cell.points = [];
     cell.head.textContent = "";
     return;
@@ -1108,14 +1357,22 @@ async function loadCell(cell) {
     open: b.open, high: b.high, low: b.low, close: b.close,
   }));
   cell.series.setData(rows);
+  cell.bars = data.bars;   // 预警组的头部要用它算当日涨跌
   cell.points = rows.map((r) => ({ time: r.time, value: r.close }));
   // 同一条信号在 1m 和 1d 上落的位置不同，那正是"看大做小"要看的东西。
   // 但 **bar 太少时不画**：lightweight-charts 的标注尺寸随 bar 宽度缩放，
   // 只有一两根 bar 时每根极宽、箭头被撑到半个格子，反而把 K 线盖住，
   // 还会让人误以为那是个特别重要的信号。数据攒够了自然就会出现。
+  // 九宫格也走自绘层，徽章同样锚在触发价上 —— 两处用两套画法，
+  // 同一条信号在单图和格子里会落在不同高度，那是最容易被读错的一种不一致。
+  // 格子里**只画徽章**：成交胶囊在 1/9 屏宽里挤不下，那是单图的事。
   const shown = new Set(data.bars.map((b) => b.close_ts));
-  cell.series.setMarkers(data.bars.length < MARKER_MIN_BARS ? []
-    : (marks.markers || []).filter((m) => shown.has(m.bucket_ts)).map(signalMarker));
+  cell.layer.setData({
+    symbol: S.symbol,
+    groups: data.bars.length < MARKER_MIN_BARS ? []
+      : (marks.markers || []).filter((m) => shown.has(m.bucket_ts)),
+    fills: [], trades: [], selected: null,
+  });
   const legend = drawOverlays(cell.chart, cell.series, data,
     { maStore: "maSeries", volume: cell.volume, host: cell });
   const last = data.bars.at(-1);
@@ -1156,15 +1413,227 @@ function onGridKey(ev) {
   if (G.zoomed) zoomCell(G.zoomed);
 }
 
+/* ── 预警组 ─────────────────────────────────────────
+ *
+ * 组由**服务端算**（web/watchlist.py）：钉住的 ∪ 最近触发的，取前九。
+ * 前端只负责画，以及"已读"这一件本地状态。
+ */
+async function loadWatch() {
+  const d = await api("/api/watchlist");
+  G.wl = d;
+  renderWlTabs();
+  const market = d.markets.find((m) => m.key === G.market) || d.markets[0];
+  G.market = market.key;
+  const entries = market.entries.slice(0, d.slots);
+
+  // 组里没有的格子要从 DOM 里摘掉，否则切市场后上一组的标的还挂着
+  const keep = new Set(entries.map((e) => e.symbol));
+  for (const [uid, cell] of G.wcells) {
+    if (!keep.has(uid)) { cell.root.remove(); G.wcells.delete(uid); }
+  }
+  // 空槽自己记着，靠选择器找回来再删太脆（选择器一改就静默漏删，格子越堆越多）
+  for (const el of G.slots) el.remove();
+  G.slots = [];
+
+  const cells = entries.map((e) => {
+    const cell = watchCell(e.symbol);
+    cell.entry = e;
+    $("#grid").appendChild(cell.root);      // 重新 append = 按组的顺序排位
+    paintWatchHead(cell, e);
+    return cell;
+  });
+  // 空槽：看着像「留着位子」，不像「坏了」
+  for (let i = entries.length; i < d.slots; i += 1) {
+    const slot = document.createElement("div");
+    slot.className = "cell";
+    slot.innerHTML = `<div class="cell-slot">等待信号</div>`;
+    $("#grid").appendChild(slot);
+    G.slots.push(slot);
+  }
+
+  const over = market.pinned_over_slots;
+  $("#chart-note").textContent =
+    `${market.label}预警组：${entries.length} / ${d.slots} 格`
+    + `　周期 ${G.wtf}　钉住的不会被新信号挤掉`
+    + (over ? `　⚠️ 钉住了 ${entries.length} 个，超出 ${over} 个仍会显示但挤到了后面` : "")
+    + (d.local_only ? "" : "　（面板未绑回环，钉住已禁用）");
+
+  await Promise.all(cells.map((c) => loadWatchCell(c).catch((e) => {
+    c.head.textContent = "加载失败";
+    console.error(c.key, e);
+  })));
+  requestAnimationFrame(() => cells.forEach(fitCell));
+}
+
+/* 格子头部：标的名、钉图标、价格、触发理由。
+   未读用**三重信号**：整格内描边 + 头部一条竖条 + 规则名转蓝。 */
+function paintWatchHead(cell, e) {
+  const unread = !!e.dedup_key && !G.seen.has(e.dedup_key);
+  cell.root.classList.toggle("unread", unread);
+  cell.name.textContent = shortSym(e.symbol);
+  cell.pin.classList.toggle("on", e.pinned);
+  cell.pin.disabled = G.wl ? !G.wl.local_only : false;
+  cell.pin.onclick = (ev) => { ev.stopPropagation(); togglePin(e); };
+  // 没有信号的钉住项显示「手动钉住」，不编一条不存在的规则出来
+  cell.why.textContent = e.rule_id || "手动钉住";
+  cell.ago.textContent = e.fired_at ? ago(e.fired_at) : (e.watched ? "等待触发" : "无规则");
+  // 点开即已读。**没有这个状态，扫第二遍时分不清哪个是新的。**
+  cell.root.onclick = (ev) => {
+    if (ev.shiftKey) return;             // shift+单击留给锁定十字线
+    if (!e.dedup_key) return;
+    markSeen(e.dedup_key);
+    paintWatchHead(cell, e);
+    renderWlTabs();
+  };
+}
+
+/* 相对时间。绝对时刻在放大后的图里看，格子里只要"多久之前"。 */
+function ago(ts) {
+  const s = Math.max(0, Math.floor(Date.now() / 1000) - ts);
+  if (s < 60) return "刚刚";
+  if (s < 3600) return `${Math.floor(s / 60)} 分钟前`;
+  if (s < 86400) return `${Math.floor(s / 3600)} 小时前`;
+  return `${Math.floor(s / 86400)} 天前`;
+}
+
+function renderWlTabs() {
+  const box = $("#wl-tabs");
+  if (!box || !G.wl) return;
+  box.innerHTML = G.wl.markets.map((m) => {
+    const n = m.entries.filter((e) => e.dedup_key && !G.seen.has(e.dedup_key)).length;
+    // 未读数只在有未读时出现：常驻一个 0 会让人以为一直有东西没看
+    return `<button class="wl-tab${m.key === G.market ? " active" : ""}" data-k="${esc(m.key)}">`
+      + `<span>${esc(m.label)}</span>`
+      + (n ? `<span class="wl-n">${n}</span>` : "")
+      + `</button>`;
+  }).join("");
+  $$("#wl-tabs .wl-tab").forEach((el) => {
+    el.onclick = async () => { G.market = el.dataset.k; await loadWatch(); };
+  });
+}
+
+async function togglePin(e) {
+  try {
+    if (e.pinned) await api(`/api/watchlist/pin?symbol=${encodeURIComponent(e.symbol)}`,
+                            { method: "DELETE" });
+    else await send("/api/watchlist/pin", { symbol: e.symbol });
+  } catch (err) {
+    toast(String(err.message || err), "bad");
+    return;
+  }
+  await loadWatch();
+}
+
+/* 一格的行情。与周期模式共用 loadCell —— 那边已经处理好均线、成交量、
+   标记层与空状态，这里只需要把格子的周期指到整组选定的那个。 */
+async function loadWatchCell(cell) {
+  cell.tf = G.wtf;
+  const e = cell.entry;
+  // **没有规则盯 ⇒ 盯盘进程不采集 ⇒ 图永远是空的。** 这条要当场说清楚，
+  // 否则又是一个静默的空（这个项目在这上面栽过：用户以为是行情连不上）。
+  if (!e.watched) {
+    cell.series.setData([]);
+    cell.layer?.setData({ groups: [], fills: [], trades: [], selected: null });
+    cell.points = [];
+    cell.head.textContent = "";
+    let empty = cell.body.querySelector(".cell-empty");
+    if (!empty) {
+      empty = document.createElement("div");
+      empty.className = "cell-empty";
+      cell.body.appendChild(empty);
+    }
+    empty.innerHTML = `没有规则盯 ${esc(shortSym(e.symbol))}<br>盯盘进程不采集它的行情`;
+    return;
+  }
+  const prev = S.symbol;
+  S.symbol = e.symbol;                 // loadCell 按 S.symbol 取数
+  try { await loadCell(cell); } finally { S.symbol = prev; }
+  // **头部改写成最新价 + 当日涨跌**，覆盖掉 loadCell 写进去的均线图例。
+  // 预警组的格子头部已经有标的名和钉图标，再塞两个均线值就会换行 ——
+  // 这个坑在 chart-head 上踩过两次（价均线一次、量均线一次）。
+  // 而且横着扫九个标的时，要的是"现在多少钱、涨还是跌"，不是 SMA 值。
+  paintWatchPrice(cell);
+}
+
+/* 当日涨跌：以**本交易日第一根的开盘**为基准。
+
+   窗口没覆盖到今天开盘时（休市后看昨天的图、或格子周期太小）给破折号，
+   **不拿窗口首根凑数** —— 那个数看着像涨跌幅，其实是"最近 18 小时的涨跌"，
+   量级和含义都不对，比不显示危险得多。 */
+function paintWatchPrice(cell) {
+  const bars = cell.bars || [];
+  const last = bars[bars.length - 1];
+  if (!last) { cell.head.textContent = ""; return; }
+  const day = last.trading_day;
+  const first = day ? bars.find((b) => b.trading_day === day) : null;
+  const base = first ? first.open : null;
+  const chg = base ? (last.close - base) / base * 100 : null;
+  const cls = chg === null ? "dim" : (chg >= 0 ? "pos" : "neg");
+  const text = chg === null ? "—" : `${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%`;
+  cell.head.innerHTML = `<span>${esc(num(last.close))}</span>`
+    + `<span class="${cls}" style="margin-left:6px">${esc(text)}</span>`;
+}
+
 async function toggleGrid(want) {
   G.on = want === undefined ? !G.on : want;
   $("#grid").hidden = !G.on;
   $("#chart").hidden = G.on;
   $("#grid-toggle").classList.toggle("active", G.on);
-  $("#tf-group").hidden = G.on;     // 九宫格里周期由格子决定，单选按钮没有意义
+  $("#grid-mode").hidden = !G.on;
+  // 周期按钮在两种模式下含义不同：周期模式里由格子决定（藏起来），
+  // 预警组里是**整组一个周期**（显示，但绑的是 G.wtf 不是 S.timeframe）
+  $("#tf-group").hidden = G.on;
+  $("#wl-tabs").hidden = !(G.on && G.mode === "watch");
   if (!G.on) { G.pinned = null; G.zoomed = null; }
-  if (G.on) await loadGrid();
+  if (G.on) await renderGrid();
   else { ensureChart(); await loadChart(S.selected?.fired_at); }
+}
+
+/* 切模式时把另一种模式的格子从 DOM 里摘掉（不销毁图表，切回来还要用）。
+   销毁重建九个图表只为切一次模式太浪费，而模式是会来回切的。 */
+async function renderGrid() {
+  const watch = G.mode === "watch";
+  for (const c of G.cells.values()) c.root.remove();
+  for (const c of G.wcells.values()) c.root.remove();
+  for (const el of G.slots) el.remove();
+  G.slots = [];
+  $("#wl-tabs").hidden = !watch;
+  renderGridMode();
+  if (watch) await loadWatch();
+  else {
+    for (const c of G.cells.values()) $("#grid").appendChild(c.root);
+    await loadGrid();
+  }
+}
+
+function renderGridMode() {
+  const box = $("#grid-mode");
+  if (!box) return;
+  const modes = [["watch", "预警组 · 九标的"], ["tf", "九周期 · 单标的"]];
+  const tfs = G.mode === "watch"
+    ? ["1m", "5m", "15m", "30m", "1h"].map((t) =>
+        `<button class="tf${t === G.wtf ? " active" : ""}" data-wtf="${t}">${t}</button>`)
+    : [];
+  box.innerHTML = modes.map(([k, label]) =>
+    `<button class="tf${k === G.mode ? " active" : ""}" data-mode="${k}">${label}</button>`)
+    .concat(tfs.length ? [`<span class="lbl" style="padding:0 4px">周期</span>`] : [])
+    .concat(tfs).join("");
+  $$("#grid-mode [data-mode]").forEach((el) => {
+    el.onclick = async () => {
+      if (el.dataset.mode === G.mode) return;
+      G.mode = el.dataset.mode;
+      G.pinned = null; G.zoomed = null;
+      await renderGrid();
+    };
+  });
+  $$("#grid-mode [data-wtf]").forEach((el) => {
+    el.onclick = async () => {
+      if (el.dataset.wtf === G.wtf) return;
+      G.wtf = el.dataset.wtf;
+      renderGridMode();
+      await loadWatch();
+    };
+  });
 }
 
 /* ── 信号提醒：弹窗 / 声音 / 语音播报 / 桌面通知 ────────────────
@@ -1353,20 +1822,11 @@ function connectSSE() {
     queueAlert(sig);   // **只有 SSE 推来的才提醒**；开机灌进来的历史信号不响
     fillRuleFilter();  // 新规则第一次触发时，它才会出现在筛选框里
     renderFeed();
-    await refreshChains();
     if (S.symbol) await loadChart(S.selected ? S.selected.fired_at : null);
     setBadge("#mode", "实时 · 已连接", "ok");
   });
   es.addEventListener("hello", () => setBadge("#mode", "实时 · 已连接", "ok"));
   es.onerror = () => setBadge("#mode", "实时 · 断开，重连中", "warn");
-}
-
-async function refreshChains() {
-  try {
-    const d = await api("/api/chains");
-    S.chains = d.chains || [];
-    renderChains();
-  } catch { /* 面板是只读的，取不到就先不显示 */ }
 }
 
 async function refreshBadges() {
@@ -1676,6 +2136,7 @@ async function loadRules() {
 }
 
 async function boot() {
+  loadSeen();   // 已读集合是本地状态，早点读出来，第一次画预警组就能用上
   S.meta = await api("/api/meta");
   setBadge("#mode", S.meta.live ? "实时 · 连接中" : "独立只读", "");
 
@@ -1703,13 +2164,11 @@ async function boot() {
   // **必须在信号加载之后再填一次**：筛选框要统计每条规则的信号数，
   // 还要把"已下线但库里仍有信号"的规则补进来 —— boot 前面那次拿不到这些。
   fillRuleFilter();
-  await refreshChains();
   renderFeed();
 
   // 优先级：选中的信号 > 最新信号 > 正在被规则监视的标的 > 注册表第一个。
   // 直接取注册表第一个会选到一个规则根本没盯、本地也没数据的标的，开屏就是一片空白。
   S.symbol = S.selected?.symbol || S.signals.at(-1)?.symbol
-    || S.chains[0]?.symbol
     || (S.meta.rules[0]?.universe || [])[0]
     || S.meta.symbols[0]?.uid || null;
   if (S.symbol) { $("#c-symbol").value = S.symbol; await loadChart(S.selected?.fired_at); }
@@ -1747,7 +2206,7 @@ async function boot() {
 
   initAlerts();
   document.addEventListener("keydown", onGridKey);
-  if (S.meta.live) { connectSSE(); setInterval(refreshChains, 20000); }
+  if (S.meta.live) connectSSE();
   await refreshBadges();
   setInterval(refreshBadges, 15000);
   setInterval(() => $("#clock").textContent = new Date().toISOString().slice(11, 19) + "Z", 1000);

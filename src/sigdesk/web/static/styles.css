@@ -49,29 +49,6 @@ button{cursor:pointer} button:hover,select:hover{border-color:var(--accent)}
 input:focus,select:focus{outline:none;border-color:var(--accent)}
 ::placeholder{color:var(--dim);opacity:1}  /* Firefox 默认 opacity 不是 1 */
 
-/* ── 链路状态条 ─────────────────────────────────── */
-.chains{padding:12px 16px 14px;border-bottom:1px solid var(--line);flex:none}
-.chains-head{display:flex;align-items:baseline;gap:10px;margin-bottom:9px}
-.chains-head b{font-size:12px;font-weight:600}
-.chain-grid{display:grid;gap:12px;justify-content:start;
-  /* auto-fill + 固定上限：卡片不会被拉宽到步骤散开，也不会在窄屏挤成一列 */
-  grid-template-columns:repeat(auto-fill,minmax(280px,360px))}
-.chain{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
-.chain.armed{border-color:var(--warn)}
-.chain.cooldown{border-color:var(--line)}
-.chain-top{display:flex;align-items:center;gap:8px;margin-bottom:9px}
-.chain-top .sym{font-size:12px}
-.chain-phase{margin-left:auto;display:flex;align-items:center;gap:5px;font-size:11px}
-.steps{display:flex;align-items:flex-start;gap:0}
-.step{flex:1;display:flex;flex-direction:column;gap:4px}
-.step-line{display:flex;align-items:center}
-.step-line i{height:2px;flex:1;background:var(--line);display:block}
-.step-line i.on{background:var(--up)}
-.step-dot{width:11px;height:11px;flex:none}
-.step-cap{text-align:center;font-size:10px;line-height:1.3;color:var(--dim)}
-.step-cap.on{color:var(--fg)}
-.chain-note{margin-top:8px;font-size:10px;color:var(--dim)}
-
 /* ── 盯盘主体 ───────────────────────────────────── */
 .live-body{display:grid;grid-template-columns:1fr 372px;flex:1;min-height:0}
 .chart-pane{display:flex;flex-direction:column;min-width:0;min-height:0;
@@ -255,12 +232,16 @@ button.danger:hover{border-color:var(--down);color:var(--down)}
   grid-template-rows:repeat(3,minmax(0,1fr));gap:1px;background:var(--line)}
 .cell{position:relative;background:var(--bg);min-width:0;min-height:0;display:flex;
   flex-direction:column;cursor:pointer}
+/* **不许换行**：预警组的头部比周期模式多了标的名和钉图标，一换行就把
+   价格顶到第二排、和均线图例叠成乱码（截图里当场看到）。
+   同一个坑在 chart-head 上踩过两次，这里从一开始就钉死。 */
 .cell-head{display:flex;align-items:center;gap:7px;padding:4px 8px;flex:none;
-  border-bottom:1px solid var(--line)}
+  flex-wrap:nowrap;overflow:hidden;border-bottom:1px solid var(--line)}
+.cell-head .cell-tf{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* 不叫 .tf：那是顶部的周期按钮，两个不同的东西共用类名会让选择器互相误伤 */
 .cell-head .cell-tf{color:var(--fg);font-size:12px}
 .cell-head .ohlc{margin-left:auto;font-size:10.5px;color:var(--dim);white-space:nowrap;
-  overflow:hidden;text-overflow:ellipsis}
+  overflow:hidden;text-overflow:ellipsis;flex:none}
 .cell-body{flex:1;min-height:0;position:relative}
 .cell:hover{outline:1px solid var(--accent);outline-offset:-1px;z-index:2}
 /* 放在**左下**：右上是格子标题的价格/根数，压上去会叠成乱码（截图里当场看到）。
@@ -284,3 +265,51 @@ button.danger:hover{border-color:var(--down);color:var(--down)}
 .ma-legend{position:absolute;left:10px;top:6px;z-index:3;display:flex;gap:12px;
   font-size:11.5px;pointer-events:none;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 .ma-legend:empty{display:none}
+
+/* 折叠标记的展开列表。图上「B×3」只画得下一枚代表，另外两条在这里点得到 —— */
+/* 缺了它折叠就等于把信号藏起来，比不折叠更糟。 */
+.sibs { margin-top: 8px; padding-top: 8px; border-top: 1px solid #262c36; }
+.sibs > .lbl { display: block; margin-bottom: 4px; }
+.sib {
+  display: flex; align-items: center; gap: 8px;
+  padding: 3px 6px; border-radius: 4px; cursor: pointer;
+  font-size: 12px; color: #c9d1d9;
+}
+.sib:hover { background: #1b2028; }
+.sib.on { background: #1b2028; box-shadow: inset 2px 0 0 #58a6ff; }
+.sib .rule { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sib .mono:last-child { color: #c9d1d9; }
+
+/* ── 预警组：九个标的同屏（网格的第二种模式） ─────────────────── */
+/* 市场 tab。沿用 .tabs/.tab 的规格，但挂在图表区里而不是页面顶部 ——
+   它切的是"看哪个市场的预警组"，不是切页面。 */
+.wl-tabs{display:flex;gap:4px;padding:6px 14px 0;border-bottom:1px solid var(--line);flex:none}
+.wl-tab{background:none;border:none;color:var(--dim);padding:6px 12px;cursor:pointer;
+  border-bottom:2px solid transparent;font-size:13px;font-family:inherit;
+  display:flex;align-items:center;gap:7px}
+.wl-tab.active{color:var(--fg);border-bottom-color:var(--accent)}
+.wl-tab:hover{color:var(--fg)}
+/* 未读数：只在有未读时出现。常驻一个 0 会让人以为一直有东西没看 */
+.wl-n{display:inline-flex;align-items:center;justify-content:center;min-width:17px;height:17px;
+  padding:0 5px;border-radius:999px;background:var(--accent);color:var(--bg);
+  font-size:10px;font-weight:700;font-family:ui-monospace,Menlo,monospace}
+/* 未读格：整格内描边 + 头部一条竖条 + 规则名转蓝，三重信号。
+   点开即消 —— 没有已读状态，扫第二遍时分不清哪个是新的。 */
+.cell.unread{outline:1px solid var(--accent);outline-offset:-1px;z-index:1}
+.cell-mark{width:2px;height:12px;flex:none;border-radius:1px}
+.cell.unread .cell-mark{background:var(--accent)}
+/* 钉图标常态隐藏，悬停才淡出现；钉住后常显。
+   九个格子挂九个图标会一直抢注意力。 */
+.cell-pin{background:none;border:none;padding:0;cursor:pointer;display:flex;align-items:center;
+  color:var(--dim);opacity:0;transition:opacity .12s}
+.cell:hover .cell-pin{opacity:.55}
+.cell-pin.on{color:var(--accent);opacity:1}
+.cell-pin:hover{color:var(--accent);opacity:1}
+/* 触发理由：它为什么在这个组里。不写就是一堆无差别的缩略图。 */
+.cell-why{display:flex;align-items:center;gap:6px;padding:3px 8px;flex:none;font-size:10.5px}
+.cell-why .rule{font-family:ui-monospace,Menlo,Consolas,monospace;color:var(--dim);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cell.unread .cell-why .rule{color:var(--accent)}
+/* 空槽：看着像"留着位子"，不像"坏了" */
+.cell-slot{flex:1;display:flex;align-items:center;justify-content:center;
+  border:1px dashed var(--line);margin:8px;border-radius:6px;color:var(--dim);font-size:11px}

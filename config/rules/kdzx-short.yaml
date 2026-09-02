@@ -1,0 +1,71 @@
+# 看大做小（空头）—— 全品种通用
+#
+# 链路：1h 定方向 -> 1h 回到均线附近 -> 5m 出买点 -> 走出箱体才报
+#
+# **为什么阈值一律 ATR 归一，不用百分比**：
+#   全品种跑的话，黄金日内波动 ~0.3%、BTC ~3%，同一个 "0.6%" 对两者含义完全不同。
+#   ATR 是各品种自己的波动尺度，用它做分母，一套参数才能通吃 7 个品种。
+#
+# 调参入口（面板「规则」页改完可以立刻「历史试算」，不用重启）：
+#   - trend 的 ema 周期：放大 = 更看长期方向，信号更少
+#   - zone 的 atr 倍数：调大 = 允许离均线更远，信号更多
+#   - box 的 consolidation：调大 = 对"箱体"要求更松
+#
+# 想换成更大的级别（更接近日线打法），把 timeframes 里的 trend 改成 4h 或 1d 即可，
+# 但**先确认那个周期有足够历史**（scripts/backfill.py 回补），否则永远预热不完、一条不报。
+id: kdzx-short
+enabled: true
+description: 看大做小·空头：1h 空头趋势中反抽均线，5m 出卖点并走出箱体
+
+universe:
+  - CN.SHFE.rb2610
+  - CN.SHFE.au2610
+  - CN.SHFE.cu2610
+  - CN.CFFEX.IF2609
+  - CN.DCE.m2701
+  - CRYPTO.OKX.BTCUSDT.PERP
+  - CRYPTO.OKX.ETHUSDT.PERP
+
+timeframes:
+  trend: 1h
+  zone: 1h
+  setup: 5m
+  box: 5m
+
+conditions:
+  # ① 大级别定方向：1h 收在 20 均线下方，且均线本身在下行
+  - on: trend
+    mode: state
+    when: close < ema(close, 20) and ema(close, 20) < prev(ema(close, 20))
+
+  # ② 回到均线附近才考虑进场（不追高）。ATR 归一，全品种同一套参数
+  - on: zone
+    mode: state
+    when: abs(close - ema(close, 20)) < atr(14) * 0.8
+
+  # ③ 小级别卖点：分钟双顶，或 MACD 死叉
+  - on: setup
+    mode: event
+    when: double_top(5, 0.003) or cross_down(macd_dif(), macd_dea())
+
+  # ④ 卖点之后要走出一个箱体才报，避免追在急跌的半山腰
+  - on: box
+    mode: state
+    when: consolidation(12, 0.005)
+
+context:
+  atr14: atr(14)
+  ema20: ema(close, 20)
+context_by_role:
+  trend:
+    ema20: ema(close, 20)
+  zone:
+    atr14: atr(14)
+    dist_atr: abs(close - ema(close, 20)) / atr(14)
+
+emit:
+  direction: short
+  ttl: 48 bars            # 布防后 48 根 5m（4 小时）内没等到扳机就撤防
+  cooldown: 30m
+  priority: high
+  dedup_key: "{symbol}:{rule}:{trend_bar_close_ts}"   # 同一根 1h 内每个标的只报一次

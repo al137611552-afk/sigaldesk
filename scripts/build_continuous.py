@@ -54,6 +54,7 @@ DERIVED = [Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1, Timeframe.H
            Timeframe.D1, Timeframe.W1, Timeframe.MON1]
 # 新合约在成为主力之前就已经在交易。多拉这些自然日，是为了拿到换月锚点
 # ——「两个合约都有成交的最后一根」。拉不够就算不出价差，脚本会明确报错。
+CHUNK_DAYS = 7   # 单次 by-timerange 的最大跨度，再大就会读超时
 OVERLAP_DAYS = 15
 
 
@@ -113,9 +114,17 @@ async def build(uid: str, start: str, end: str, adjust: AdjustMode, dry_run: boo
             seg = next(s for s in segments if s.contract == contract)
             # 往前多拉 OVERLAP_DAYS 是为了换月锚点，多出来的部分 stitch 会自行裁掉
             frm = _minus_days(seg.start_day, OVERLAP_DAYS)
-            raw = await client.kline_by_timerange(
-                contract, Timeframe.M1, _day_ts(frm), _day_ts(seg.end_day, end=True)
-            )
+            # 与 backfill.py 同一个坑：by-timerange 跨度一大就读超时（分段是幂等的）
+            raw: list[dict[str, object]] = []
+            cur = dt.date.fromisoformat(frm)
+            stop_day = dt.date.fromisoformat(seg.end_day)
+            while cur <= stop_day:
+                chunk_end = min(cur + dt.timedelta(days=CHUNK_DAYS - 1), stop_day)
+                raw.extend(await client.kline_by_timerange(
+                    contract, Timeframe.M1,
+                    _day_ts(cur.isoformat()), _day_ts(chunk_end.isoformat(), end=True),
+                ))
+                cur = chunk_end + dt.timedelta(days=1)
             bars = normalize_klines(
                 raw, symbol=contract, timeframe=Timeframe.M1, now_ts=now, calendar=cal
             )

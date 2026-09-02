@@ -73,7 +73,7 @@ def test_panel_calls_every_endpoint_it_needs(smoke: dict[str, object]) -> None:
     """接口名写错在浏览器里只会安静地少一块内容，这里要当场发现。"""
     assert set(smoke["endpoints"]) >= {  # type: ignore[arg-type]
         "/api/meta", "/api/signals", "/api/bars", "/api/markers",
-        "/api/health", "/api/events", "/api/chains", "/api/trade",
+        "/api/health", "/api/events", "/api/trade",
     }
 
 
@@ -112,22 +112,19 @@ def test_times_render_in_market_local_timezone(smoke: dict[str, object]) -> None
     assert "CST" in html, "期货信号没有按北京时间显示"
     assert "UTC" in html, "加密信号没有按 UTC 显示"
 
-
-def test_chain_strip_shows_phase_and_ttl(smoke: dict[str, object]) -> None:
-    """链路状态条是这一版的核心新增：引擎知道"正在酝酿什么"，要显示出来。"""
-    html = str(smoke["chains_html"])
-    assert smoke["chains_hidden"] is False
-    assert "已布防" in html and "冷却中" in html
-    assert "TTL 4/6" in html, "已布防的卡片要显示 TTL 剩余"
-    assert "trend 15m" in html and "trigger 1m" in html
-
-
 def test_markers_come_from_the_server(smoke: dict[str, object]) -> None:
-    """分桶与筛选都在服务端做，前端只画。夹具给 4 条信号（1 条落在本周期外）+ 2 笔成交，
-    所以图上应有 3 个信号标注 + 2 个成交标注 = 5 个。"""
-    assert smoke["markers"] == 5
-    assert "标注 3/4" in str(smoke["chart_note"])
-    assert "不在本周期序列内" in str(smoke["chart_note"]), "被丢弃的信号没有如实提示"
+    """分桶、折叠与配对都在服务端做，前端只画。夹具给 4 条信号（1 条落在本周期外、
+    2 条叠在同一根 bar 上折成一枚）+ 2 笔成交，所以图上是 3 枚信号标记 + 2 个成交标记。"""
+    ops = smoke["marker_ops"]
+    assert isinstance(ops, list)
+    assert len([o for o in ops if str(o).startswith("signal|")]) == 3, ops
+    assert len([o for o in ops if str(o).startswith("fill|")]) == 2, ops
+    note = str(smoke["chart_note"])
+    # 折叠后"标记枚数 < 信号条数"是正常的，必须说清差额去哪了 ——
+    # 光写"标注 3/4"会被读成"1 条丢了"。
+    assert "标注 3 枚 / 信号 4 条" in note, note
+    assert "折成 ×N" in note, f"折叠了却没说，差额会被误读成丢信号: {note}"
+    assert "不在本周期序列内" in note, "被丢弃的信号没有如实提示"
 
 
 def test_stats_lead_with_the_verdict(smoke: dict[str, object]) -> None:
@@ -291,55 +288,149 @@ def test_textarea_is_covered_by_the_base_form_styling() -> None:
 # ---- 图上标注：信号与成交要分得开 ----------------------------------------
 
 
+def _ops(smoke: dict[str, object], kind: str) -> list[list[str]]:
+    """自绘层录下的绘制记录，按类型取。格式见 createMarkerLayer 里的 ops.push。"""
+    out = []
+    for op in smoke["marker_ops"]:  # type: ignore[union-attr]
+        parts = str(op).split("|")
+        if parts[0] == kind:
+            out.append(parts)
+    return out
+
+
+# 夹具里坐标是**确定的假映射**：priceToCoordinate = 1000 - 价格 × 0.01
+def _y(price: float) -> str:
+    return f"{1000 - price * 0.01:.1f}"
+
+
+def test_markers_are_anchored_to_the_actual_price(smoke: dict[str, object]) -> None:
+    """**买卖点画在真实价格上。**
+
+    这是内置 `setMarkers` 做不到的一条：它的位置只能是 aboveBar / belowBar / inBar，
+    徽章贴的是那根 bar 的最高/最低点，**不是触发价、也不是成交价**。
+    换了形状和文字也还是"跟之前一样"（用户原话："这个买卖点也没有和准确的价格对应"）。
+    自绘层用 priceToCoordinate，几何才真正锚在价格上。
+    """
+    sig = _ops(smoke, "signal")
+    assert sig, "一个信号都没画"
+    by_dir = {p[1]: p for p in sig}
+    # 夹具三条信号的触发价：多 77000.5、空 77100.0、中性 77050.0
+    assert by_dir["long"][2].split(",")[1] == _y(77000.5), by_dir["long"]
+    assert by_dir["short"][2].split(",")[1] == _y(77100.0), by_dir["short"]
+    assert by_dir["neutral"][2].split(",")[1] == _y(77050.0), by_dir["neutral"]
+
+    fills = {p[1]: p for p in _ops(smoke, "fill")}
+    assert fills["entry"][2].split(",")[1] == _y(77010.2), fills["entry"]
+    assert fills["target"][2].split(",")[1] == _y(77400.0), fills["target"]
+
+
+def test_markers_are_anchored_to_the_right_bar(smoke: dict[str, object]) -> None:
+    """横向也要对：分桶在服务端算好，前端按 timeToCoordinate 落位，不做就近吸附。
+    夹具里每分钟 20px，起点是第一根 bar。"""
+    by_dir = {p[1]: p for p in _ops(smoke, "signal")}
+    assert by_dir["long"][2].split(",")[0] == "0.0", by_dir["long"]      # 1788139800
+    assert by_dir["short"][2].split(",")[0] == "20.0", by_dir["short"]   # 1788139860
+    assert by_dir["neutral"][2].split(",")[0] == "40.0", by_dir["neutral"]  # 1788139920
+
+
 def test_signal_directions_render_differently(smoke: dict[str, object]) -> None:
-    """买卖点用**圆点 + B/S 字母**，不用箭头。
+    """买卖点用**圆形徽章 + B/S 字母**，不用箭头。
 
     箭头只有朝向之分：一屏全是多头信号时看着就是一模一样的一片（用户原话
-    「现在 K 线图上全部是向上的箭头」）。字母是直接可读的，扫一眼就知道买还是卖。
+    「现在 K 线图上全部是向上的箭头」）。字母是直接可读的。
     中性信号**不写字母** —— 它既不是买也不是卖，硬安一个字母是撒谎。
     """
-    marks = [str(m) for m in smoke["marker_detail"]]  # type: ignore[union-attr]
-    assert "circle|belowBar|#26a69a|B" in marks, f"多头：绿圆 + B，画在 bar 下方: {marks}"
-    assert "circle|aboveBar|#ef5350|S" in marks, f"空头：红圆 + S，画在 bar 上方: {marks}"
-    neutral = [m for m in marks if "#8b949e" in m]
-    assert neutral and all(m.startswith("circle") and m.endswith("|") for m in neutral), (
-        f"中性是无字母的灰圆: {neutral}")
+    by_dir = {p[1]: p for p in _ops(smoke, "signal")}
+    assert by_dir["long"][3].startswith("B"), by_dir["long"]
+    assert by_dir["short"][3] == "S", by_dir["short"]
+    assert by_dir["neutral"][3] == "", f"中性不该有字母: {by_dir['neutral']}"
 
 
-def test_fills_are_drawn_and_priced_only_for_the_selected_signal(
+def test_collapsed_markers_show_a_multiplier(smoke: dict[str, object]) -> None:
+    """同一根 bar 同方向的多条信号折成一枚「B×2」。
+
+    密集处原本是几枚标记完全重叠、只看得见最上面那个 —— 看着像一条，实际是三条。
+    """
+    by_dir = {p[1]: p for p in _ops(smoke, "signal")}
+    assert by_dir["long"][3] == "B×2", by_dir["long"]
+    assert by_dir["long"][4] == "2"
+
+
+def test_collapsed_marker_expands_into_a_clickable_list(smoke: dict[str, object]) -> None:
+    """图上「×2」只画得下一枚代表，另外那条必须在详情里点得到。
+
+    **缺了这一步，折叠就等于把信号藏起来** —— 那比不折叠更糟。
+    """
+    html = str(smoke["detail_html"])
+    assert "同一根 bar 上共" in html, f"折叠标记没有展开列表: {html[:400]}"
+    assert html.count('class="sib') >= 2, "展开列表没把每条成员都列出来"
+
+
+def test_fill_markers_split_price_and_pnl_between_the_two_ends(
     smoke: dict[str, object],
 ) -> None:
-    """信号是"我认为该进场"，成交是"实际以什么价成交了"，两件事分开画。
+    """成交两端分工：**开仓写价格，离场写盈亏**。
 
-    但**价格文字只给选中信号的那几笔**：几十笔成交挤在几百根 bar 里全写字会叠成一团，
-    互相遮蔽（截图里当场看到 5 个标签压在一起）—— 信号标注当初不写文字就是这个原因。
-    常态只画点表示"这里有成交"，点开某条信号后它那几笔才显示价格。
+    两端都写"价格 + 盈亏"试过了 —— 密集处两个离场标签直接压在一起。
+    胶囊有底片压得住 K 线了，但底片不解决"两个胶囊互相盖"，字短才解决。
+    夹具里 k1 是选中的那条，所以两端都写全（档位词 + 价格 + 盈亏）。
     """
-    plain = [str(m) for m in smoke["marker_detail"]]  # type: ignore[union-attr]
-    picked = [str(m) for m in smoke["marker_detail_selected"]]  # type: ignore[union-attr]
-
-    # **三种形状各司其职**：圆点=信号、方块=开仓、箭头=离场。
-    # 信号改成圆点之后，离场原本也是圆点、同色时完全分不开，所以换成箭头。
-    assert any(m.startswith("square") for m in plain), "开仓用方块"
-    assert any(m.startswith(("arrowUp", "arrowDown")) for m in plain), "离场用箭头"
-    signals = [m for m in plain if m.startswith("circle")]
-    assert signals, "信号用圆点"
-
-    fills = [m for m in plain if not m.startswith("circle")]
-    assert all(m.endswith("|") for m in fills), f"未选中时成交不该有价格文字: {fills}"
-
-    entry = [m for m in picked if "开仓" in m]
-    exit_ = [m for m in picked if "止盈" in m]
-    assert entry and "77,010.2" in entry[0], picked
-    assert exit_ and "77,400" in exit_[0], picked
-    assert exit_[0].startswith("arrowDown"), "卖出离场箭头朝下"
+    fills = {p[1]: p for p in _ops(smoke, "fill")}
+    assert "77,010.2" in fills["entry"][3], fills["entry"]
+    assert "+0.47%" in fills["target"][3], fills["target"]
+    assert fills["target"][4] == "pill", "选中那笔的成交要带胶囊，不能只剩锚点"
 
 
-def test_chart_note_counts_fills_separately(smoke: dict[str, object]) -> None:
+def test_fill_pills_degrade_to_a_dot_when_they_would_collide() -> None:
+    """胶囊撞了就退化成只留锚点。
+
+    **锚点永远画** —— 它才是"成交发生在这个价"的证据；能省的只有价格文字。
+    密集处宁可少几个价格，也不要糊成一团（内置 marker 时代就是糊成一团）。
+    """
+    js = pathlib.Path("src/sigdesk/web/static/app.js").read_text(encoding="utf-8")
+    fn = js[js.index("function pill("):]
+    fn = fn[: fn.index("\n}\n")]
+    assert "rects.some(" in fn, "没有做碰撞检测"
+    assert "return false" in fn, "撞了要告诉调用方，好退化成锚点"
+
+
+def test_exit_marker_carries_the_trade_pnl(smoke: dict[str, object]) -> None:
+    """离场那枚挂上这笔的盈亏 —— 方案 C 的核心："这笔赚还是亏"一眼看完。"""
+    fills = {p[1]: p for p in _ops(smoke, "fill")}
+    assert "+0.47%" in fills["target"][3], fills["target"]
+
+
+def test_trade_band_connects_entry_to_exit(smoke: dict[str, object]) -> None:
+    """成对交易带：开仓与它的离场连成一笔，两端锚在**成交价**上，颜色随盈亏。
+
+    夹具里 k1 盈利平仓、k3 仍持仓 —— **持仓中的不画连线**：它还没有终点，
+    从开仓拉一条线到最后一根 bar 会被读成"在那里平掉了"，那是假的。
+    """
+    bands = _ops(smoke, "band")
+    assert len(bands) == 1, f"只有一笔已平交易，就该只有一条带: {bands}"
+    b = bands[0]
+    assert b[1] == f"20.0,{_y(77010.2)}", b      # 开仓：时刻 + 成交价
+    assert b[2] == f"200.0,{_y(77400.0)}", b     # 平仓：时刻 + 成交价
+    assert b[3] == "#26a69a", f"这笔盈利，应当是绿的: {b}"
+
+
+def test_every_chart_uses_the_same_marker_layer(smoke: dict[str, object]) -> None:
+    """九宫格与单图**共用一套画法**。
+
+    两处各画一套的话，同一条信号在单图和格子里会落在不同高度 ——
+    那是最容易被读错的一种不一致，而且不会报错。
+    夹具：单图 1 层 + 九周期模式 8 层（分时那格是折线，没有信号标记）
+    + 预警组 3 层（夹具里三个标的）= 12。
+    """
+    assert smoke["marker_layers"] == 12, smoke["marker_layers"]
+
+
+def test_chart_note_counts_trades_and_open_positions(smoke: dict[str, object]) -> None:
     note = str(smoke["chart_note"])
-    assert "成交 2 笔" in note
-    # 常态不标价，就得告诉人怎么才能看到价 —— 否则"看不到成交价"这个抱怨会原样回来
-    assert "已标价" in note or "点信号看成交价" in note, note
+    assert "交易 2 笔" in note, note
+    # 持仓中的交易**不画连线**（它还没有终点，画到最后一根会被读成"在那里平掉了"），
+    # 所以必须在文字里说清楚，否则会被当成漏画。
+    assert "持仓中" in note, f"有持仓中的交易却没说明为什么图上没连线: {note}"
 
 
 def test_rule_filter_can_be_refilled_without_a_page_reload() -> None:
@@ -421,6 +512,8 @@ def test_every_queried_id_exists_in_the_markup(smoke: dict[str, object]) -> None
     （缩进差两格），按钮压根没插进 index.html，而冒烟照样绿。
 
     所以把 app.js 真正查过的 #id 拿去和 index.html 对一遍。
+    元素也可以由 app.js 自己生成（如链路折叠按钮），那种同样算"存在"——
+    只认静态 HTML 会把动态元素误报成缺失。
     """
     assert smoke["missing_ids"] == [], (
         f"app.js 查了这些 id，但 index.html 里没有：{smoke['missing_ids']}")
@@ -472,7 +565,7 @@ def test_grid_cells_zoom_on_double_click_not_single() -> None:
     """单击要留给"停在这一格看十字线、对比多周期" —— 单击就放大等于
     根本没法在小格里看盘（用户实际用起来第一件事就撞上了）。"""
     js = pathlib.Path("src/sigdesk/web/static/app.js").read_text(encoding="utf-8")
-    cell = js[js.index("function gridCell("):]
+    cell = js[js.index("function makeCell("):]
     cell = cell[: cell.index("\n}\n")]
     assert "root.ondblclick" in cell
     assert "root.onclick" not in cell, "单击不能放大"
@@ -493,7 +586,7 @@ def test_intraday_cell_draws_two_lines_not_candles() -> None:
     """分时是当日 1m 的一种画法（价格线 + 均价线），不是 K 线 ——
     也不是一个"周期"，所以不占 Timeframe 枚举。"""
     js = pathlib.Path("src/sigdesk/web/static/app.js").read_text(encoding="utf-8")
-    cell = js[js.index("function gridCell("):]
+    cell = js[js.index("function makeCell("):]
     cell = cell[: cell.index("\n}\n")]
     assert "addLineSeries" in cell and "isIntraday" in cell
     load = js[js.index("async function loadIntradayCell("):]
@@ -597,9 +690,9 @@ def test_moving_averages_skip_warmup_instead_of_drawing_zero(
 ) -> None:
     """预热期服务端返回 null，前端必须**跳过**这些点。
     补 0 会在图左端画出一条从零飙起来的假线（ADR-0006 的同一条原则）。
-    夹具：SMA5 是 [null, 1.65] -> 只画 1 个点；SMA20 全 null -> 0 个点。"""
+    夹具 5 根 bar：SMA5 首根 null -> 画 4 个点；SMA20 全 null -> 0 个点。"""
     lines = smoke["ma_lines"]
-    assert isinstance(lines, list) and lines[:2] == [1, 0], lines
+    assert isinstance(lines, list) and lines[:2] == [4, 0], lines
 
 
 def test_volume_moving_average_is_drawn_on_the_volume_scale(
@@ -613,7 +706,7 @@ def test_volume_moving_average_is_drawn_on_the_volume_scale(
     """
     vlines = smoke["vma_lines"]
     assert isinstance(vlines, list) and vlines, "量均线没画出来"
-    assert vlines[0] == 1, "夹具 VSMA20 是 [null, 3.5]，跳过 null 后只画 1 个点"
+    assert vlines[0] == 4, "夹具 VSMA20 首根是 null，跳过后 5 根画 4 个点"
     js = pathlib.Path("src/sigdesk/web/static/app.js").read_text(encoding="utf-8")
     fn = js[js.index("function drawVolumeMa("):]
     fn = fn[: fn.index("\n}\n")]
@@ -622,7 +715,7 @@ def test_volume_moving_average_is_drawn_on_the_volume_scale(
 
 def test_volume_bars_follow_candle_direction(smoke: dict[str, object]) -> None:
     """量柱跟着当根阴阳走 —— 和 K 线一个颜色语言，不用另记一套。"""
-    assert smoke["volume_points"] == 2
+    assert smoke["volume_points"] == 5
     assert smoke["volume_colors"] >= 1
 
 
@@ -644,3 +737,92 @@ def test_ma_legend_floats_over_the_chart_not_in_the_header() -> None:
     css = pathlib.Path("src/sigdesk/web/static/styles.css").read_text(encoding="utf-8")
     legend = css[css.index(".ma-legend{"):]
     assert "z-index:3" in legend, "要盖过 lightweight-charts 的 canvas（z-index 1/2）"
+
+
+# ------------------------------------------- 预警组（网格的第二种模式）
+
+
+def _w(smoke: dict[str, object]) -> dict[str, object]:
+    w = smoke["watch"]
+    assert isinstance(w, dict), smoke["grid_error"]
+    return w
+
+
+def test_watchlist_is_the_default_grid_mode(smoke: dict[str, object]) -> None:
+    """打开网格默认落在**预警组**：日常最先要回答的是"现在有哪几个值得看"，
+    而不是"这一个标的的九个周期长什么样"。后者是下一步。"""
+    w = _w(smoke)
+    assert w["mode"] == "watch"
+    assert w["tf"] == "5m", "默认周期是找买点的级别"
+
+
+def test_watchlist_cells_are_one_per_symbol(smoke: dict[str, object]) -> None:
+    """九标的×一周期 —— 与「一标的×九周期」正好互补。"""
+    w = _w(smoke)
+    assert w["symbols"] == ["CN.SHFE.rb2610", "CN.SHFE.rb.CONT", "CN.SHFE.ag2612"]
+    # 夹具给 3 个标的、9 个槽位 -> 6 个空槽。空槽要看着像「留着位子」，不像「坏了」
+    assert w["slots"] == 6
+
+
+def test_pinned_cells_are_marked(smoke: dict[str, object]) -> None:
+    """钉住 = 人工判断「还需要观察」，是这个功能里唯一需要人动手的操作。"""
+    assert _w(smoke)["pinned"] == ["CN.SHFE.rb2610", "CN.SHFE.ag2612"]
+
+
+def test_unread_clears_on_click_and_the_tab_count_follows(
+    smoke: dict[str, object],
+) -> None:
+    """**未读状态是这个视图的关键。**
+
+    没有它，扫第二遍时分不清哪个是新触发的、哪个是上次就看过的 ——
+    九个小图长得都一样。点开即已读，tab 上的未读数跟着减。
+    """
+    w = _w(smoke)
+    assert set(w["unread"]) == {"CN.SHFE.rb2610", "CN.SHFE.rb.CONT"}  # type: ignore[arg-type]
+    assert w["unread_after"] == ["CN.SHFE.rb.CONT"], "点开的那格没有转成已读"
+    assert '<span class="wl-n">2</span>' in str(w["tabs_html"])
+    assert '<span class="wl-n">1</span>' in str(w["tabs_after"]), "tab 上的未读数没跟着减"
+
+
+def test_market_tabs_only_badge_when_there_is_something_unread(
+    smoke: dict[str, object],
+) -> None:
+    """未读数只在有未读时出现 —— 常驻一个 0 会让人以为一直有东西没看。"""
+    html = str(_w(smoke)["tabs_html"])
+    assert "期货" in html and "加密" in html
+    assert 'class="wl-tab active" data-k="CN"' in html
+    assert ">0<" not in html
+
+
+def test_cell_says_why_it_is_in_the_group(smoke: dict[str, object]) -> None:
+    """每格写出触发理由（规则 + 多久之前）。不写的话九个格子就是一堆
+    无差别的缩略图，看不出谁为什么在这。
+
+    没有信号的钉住项显示「手动钉住」，**不编一条不存在的规则出来**。
+    """
+    why = [str(x) for x in _w(smoke)["why"]]  # type: ignore[union-attr]
+    assert "CN.SHFE.rb2610|kdzx-long|" in why[0], why
+    assert why[2] == "CN.SHFE.ag2612|手动钉住|无规则", why
+
+
+def test_unwatched_symbol_says_why_it_is_empty(smoke: dict[str, object]) -> None:
+    """**没有规则盯 ⇒ 不采集 ⇒ 图永远是空的。**
+
+    静默的空是这个项目栽过的坑（用户当时以为是行情连不上）。
+    钉住一个没人盯的品种正好会撞上它，所以必须当场说清楚。
+    """
+    assert _w(smoke)["nodata"] == ["CN.SHFE.ag2612"]
+
+
+def test_switching_modes_detaches_the_other_modes_cells(
+    smoke: dict[str, object],
+) -> None:
+    """切模式时另一种模式的格子要从网格里摘掉（**不销毁图表**，切回来还要用）。
+
+    摘不干净的话两种模式的格子会同时挂在网格里，越切越多。
+    """
+    w = _w(smoke)
+    assert w["mode_after"] == "tf"
+    assert w["wcells_detached"] is True, "切到周期模式后预警组的格子还挂在网格里"
+    grid = smoke["grid"]
+    assert isinstance(grid, dict) and len(grid["cells"]) == 9  # type: ignore[arg-type]

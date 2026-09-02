@@ -69,6 +69,8 @@ SQLite 运行态持久化与重启补判、ReplayFeed 回放。
 
 **M4 策略层 + 纸上撮合**：Signal → Intent → RiskGate → PaperBroker，
 撮合口径见 [ADR-0010](docs/adr/ADR-0010-paper-fill-conventions.md)（与统计口径共用同一套代码）。
+图上买卖点的折叠口径与信号优先级见 [ADR-0012](docs/adr/ADR-0012-marker-collapse-and-priority.md)。
+预警组（九标的同屏）的组装口径见 [ADR-0013](docs/adr/ADR-0013-watchlist-group.md)。
 **默认关闭**，在 `config/trading.yaml` 里打开。
 
 下一段是 **M5 实盘**（SimNow / 加密小仓）。

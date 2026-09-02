@@ -228,53 +228,6 @@ class RuleEngine:
             restored += 1
         return restored
 
-    def chain_states(self) -> list[dict[str, Any]]:
-        """每个 (规则, 标的) 的链路状态，供面板展示。**只读引擎内部状态，不产生任何副作用。**
-
-        面板原本只显示"已经发生的信号"，而引擎其实知道"正在酝酿什么" ——
-        哪些标的已布防、TTL 还剩几根、谁在冷却。这个方法把那部分状态如实导出来。
-
-        注意它是**当下快照**，不是历史：条件日志只留最近 max(within,2) 根，
-        所以给不出"某条件在过去 N 根里何时成立"的时间序列。
-        """
-        out: list[dict[str, Any]] = []
-        by_id = {r.id: r for r in self._rules}
-        for (rule_id, symbol), inst in sorted(self._instances.items()):
-            rule = by_id.get(rule_id)
-            if rule is None:
-                continue
-            machine = self._machines[rule_id]
-            state = inst.state
-            steps = []
-            for i, cond in enumerate(rule.conditions):
-                log = inst.logs[cond.role]
-                steps.append({
-                    "role": cond.role,
-                    "timeframe": cond.on.value,
-                    "mode": str(cond.mode),
-                    "within": cond.within,
-                    "when": cond.when.source,
-                    # done = 链路已经越过这一段；satisfied = 此刻它成不成立（None = 未知/预热期）
-                    "done": i < state.stage,
-                    "satisfied": log.satisfied(cond),
-                    "last_ts": log.last_ts or None,
-                })
-            out.append({
-                "rule_id": rule_id,
-                "symbol": symbol,
-                "phase": str(state.phase(machine.chain_len)),
-                "stage": state.stage,
-                "chain_len": machine.chain_len,
-                "ttl_left": state.ttl_left,
-                "ttl_bars": machine.ttl_bars,
-                "armed_at": state.armed_at or None,
-                "cooldown_until": state.cooldown_until or None,
-                "cooldown_s": machine.cooldown_s,
-                "last_fired_ts": state.last_fired_ts or None,
-                "steps": steps,
-            })
-        return out
-
     def cursor(self) -> dict[str, int]:
         """各标的已处理到的最新 bar close_ts。重启后据此决定要补喂哪些 bar。"""
         out: dict[str, int] = {}

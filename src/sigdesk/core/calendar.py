@@ -143,14 +143,27 @@ class MarketCalendar:
     def trading_day(self, ts: int) -> str:
         """bar 收盘时刻 -> 所属交易日 YYYY-MM-DD。
 
-        规则：夜盘（>= 20:00）归属**下一个**交易日；跨零点后的凌晨时段（<= 04:00）
-        归属当日（因为它本就是前一晚夜盘的延续，而那晚夜盘已归属当日）。
+        一场夜盘从晚上开到次日凌晨，**整场同属一个交易日** —— 那就是它开盘那晚
+        之后的第一个交易日。所以两段用同一个式子：
+
+        - 20:00 之后开的那段：``next_trading_date(当天)``
+        - 跨零点后的凌晨那段：它是**前一自然日**晚上开的那场，
+          故 ``next_trading_date(前一天)``
+
+        **跨周末/节假日时这两段必须算出同一个值。** 曾经凌晨那段直接返回当天日期，
+        平日恰好等价（周四夜盘的周五凌晨 -> 周五），但周五夜盘的周六凌晨会返回"周六"，
+        而同一场的 23:59 返回"下周一" —— 同一场夜盘被劈成两个交易日，
+        日线聚合当场报"时间倒流"，Parquet 也会分到两个分区。
+        判据与 ``in_session`` 保持一致（那边一直是按前一日的夜盘判的）。
         """
         local = dt.datetime.fromtimestamp(ts, CST)
         minute = local.hour * 60 + local.minute
         date = local.date()
+        for s in self.sessions:
+            if s.crosses_midnight and minute <= s.end_min - 1440:
+                return self.next_trading_date(date - dt.timedelta(days=1)).isoformat()
         if minute >= _hhmm("20:00"):
-            date = self.next_trading_date(date)
+            return self.next_trading_date(date).isoformat()
         return date.isoformat()
 
     def next_trading_date(self, date: dt.date) -> dt.date:

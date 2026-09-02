@@ -1,0 +1,187 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #0e1116; color: #e6edf3;
+      font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+    a { color: #58a6ff; } a:hover { color: #79bbff; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-variant-numeric: tabular-nums; }
+    .lbl { color: #8b949e; font-size: 11px; letter-spacing: .3px; }
+  </style>
+</helmet>
+
+<div style="width: 1180px; height: 760px; padding: 28px 32px; display: flex;
+            flex-direction: column; gap: 22px; background: #0e1116">
+
+  <div style="display: flex; flex-direction: column; gap: 4px">
+    <div style="font-size: 17px; font-weight: 600">单元格状态</div>
+    <div class="lbl" style="line-height: 1.7">
+      一格只回答一个问题：<span style="color:#e6edf3">这个标的现在值不值得我切过去看</span>。<br>
+      所以标的名、触发理由、多久之前，三样缺一不可 —— 只放小图就是一堆无差别的缩略图。
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+              gap: 18px; flex: 1; min-height: 0">
+    <sc-for list="{{tiles}}" as="t" hint-placeholder-count="6">
+      <div style="display: flex; flex-direction: column; gap: 8px; min-height: 0">
+        <div style="display: flex; align-items: baseline; gap: 8px">
+          <span style="font-size: 13px; color: #e6edf3">{{t.title}}</span>
+          <span class="lbl">{{t.when}}</span>
+        </div>
+
+        <div style="{{t.cellStyle}}">
+          <div style="display: flex; align-items: center; gap: 7px; padding: 4px 8px;
+                      flex: none; border-bottom: 1px solid #262c36">
+            <span style="{{t.bar}}"></span>
+            <span class="mono" style="color: #e6edf3; font-size: 12px">{{t.name}}</span>
+            <span style="{{t.pinStyle}}">
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none"
+                   stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                   stroke-linejoin="round">
+                <path d="M9.5 1.5 L14.5 6.5 L12 7 L8.5 10.5 L8 13.5 L2.5 8 L5.5 7.5 L9 4 Z"></path>
+                <line x1="2.5" y1="13.5" x2="6" y2="10"></line>
+              </svg>
+            </span>
+            <span class="mono" style="margin-left: auto; font-size: 10.5px; color: #8b949e">{{t.price}}</span>
+            <span class="mono" style="font-size: 10.5px; {{t.chgStyle}}">{{t.chg}}</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 6px; padding: 3px 8px; flex: none">
+            <span class="mono" style="font-size: 10.5px; {{t.ruleStyle}}">{{t.rule}}</span>
+            <span class="lbl" style="margin-left: auto">{{t.ago}}</span>
+          </div>
+          <div style="flex: 1; min-height: 0; position: relative; padding: 0 4px 4px">
+            <sc-if value="{{t.chart}}" hint-placeholder-val="{{ true }}">
+              <svg viewBox="0 0 260 96" preserveAspectRatio="none"
+                   style="width: 100%; height: 100%; display: block">
+                <sc-for list="{{t.candles}}" as="k" hint-placeholder-count="26">
+                  <rect x="{{k.wx}}" y="{{k.wy}}" width="1" height="{{k.wh}}" fill="{{k.color}}"></rect>
+                  <rect x="{{k.x}}" y="{{k.y}}" width="6" height="{{k.h}}" fill="{{k.color}}"></rect>
+                </sc-for>
+                <sc-for list="{{t.marks}}" as="s" hint-placeholder-count="1">
+                  <circle cx="{{s.x}}" cy="{{s.y}}" r="7" fill="{{s.color}}"></circle>
+                  <text x="{{s.x}}" y="{{s.ty}}" text-anchor="middle" fill="#0e1116"
+                        font-size="9" font-weight="700"
+                        font-family="ui-monospace, Menlo, monospace">{{s.letter}}</text>
+                </sc-for>
+              </svg>
+            </sc-if>
+            <sc-if value="{{t.note}}" hint-placeholder-val="{{ false }}">
+              <div style="position: absolute; inset: 0; display: flex; flex-direction: column;
+                          align-items: center; justify-content: center; gap: 7px;
+                          text-align: center; padding: 8px">
+                <span class="lbl" style="line-height: 1.6; white-space: pre-line">{{t.note}}</span>
+                <sc-if value="{{t.action}}" hint-placeholder-val="{{ false }}">
+                  <span style="background: #161b22; color: #58a6ff; border: 1px solid #58a6ff;
+                               border-radius: 6px; padding: 4px 10px; font-size: 11px">{{t.action}}</span>
+                </sc-if>
+              </div>
+            </sc-if>
+          </div>
+        </div>
+
+        <div class="lbl" style="line-height: 1.6; white-space: pre-line">{{t.why}}</div>
+      </div>
+    </sc-for>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{"$preview":{"width":1180,"height":760}}'>
+class Component extends DCLogic {
+  seeded(seed) {
+    let s = seed;
+    return () => { s = (s * 1103515245 + 12345) % 2147483648; return s / 2147483648; };
+  }
+  candles(seed, up) {
+    const rnd = this.seeded(seed);
+    const out = [];
+    let v = 48;
+    for (let i = 0; i < 26; i += 1) {
+      const o = v;
+      v = v + (rnd() - 0.5) * 12 + (up ? -0.7 : 0.7);
+      if (v < 10) v = 10;
+      if (v > 84) v = 84;
+      const hi = Math.min(o, v) - rnd() * 6;
+      const lo = Math.max(o, v) + rnd() * 6;
+      out.push({ x: i * 10 + 2, y: Math.min(o, v), h: Math.max(Math.abs(v - o), 1.5),
+                 wx: i * 10 + 4.5, wy: hi, wh: lo - hi,
+                 color: v < o ? "#26a69a" : "#ef5350" });
+    }
+    return out;
+  }
+
+  renderVals() {
+    const ACC = "#58a6ff", DIM = "#8b949e";
+    const cell = (extra) => "background:#0e1116;display:flex;flex-direction:column;"
+      + "height:186px;border:1px solid #262c36;border-radius:6px;overflow:hidden" + (extra || "");
+    const bar = (on) => on
+      ? "width:2px;height:12px;border-radius:1px;background:" + ACC + ";flex:none"
+      : "width:2px;height:12px;flex:none";
+    const pin = (mode) => "display:flex;align-items:center;color:"
+      + (mode === "on" ? ACC : DIM) + ";opacity:" + (mode === "off" ? "0" : (mode === "hover" ? ".55" : "1"));
+
+    const tiles = [
+      { title: "常态", when: "看过了，仍在组里",
+        name: "IF2609", price: "3,842.6", chg: "-0.07%", chgStyle: "color:#ef5350",
+        rule: "kdzx-short", ruleStyle: "color:" + DIM, ago: "41 分钟前",
+        cellStyle: cell(), bar: bar(false), pinStyle: pin("off"),
+        chart: true, candles: this.candles(45, false),
+        marks: [{ x: 205, y: 46, ty: 49.2, letter: "S", color: "#ef5350" }],
+        why: "钉图标只在悬停时淡出现 —— 常态下\n九个格子不该有九个图标在抢注意力。" },
+
+      { title: "未读 · 新触发", when: "还没点开过",
+        name: "rb2610", price: "3,118", chg: "+0.42%", chgStyle: "color:#26a69a",
+        rule: "kdzx-long", ruleStyle: "color:" + ACC, ago: "2 分钟前",
+        cellStyle: cell(";outline:1px solid " + ACC + ";outline-offset:-1px"),
+        bar: bar(true), pinStyle: pin("off"),
+        chart: true, candles: this.candles(7, true),
+        marks: [{ x: 205, y: 38, ty: 41.2, letter: "B", color: "#26a69a" }],
+        why: "整格内描边 + 头部一条竖条 + 规则名转蓝。\n点开即消 —— 没有它，扫第二遍分不清哪个是新的。" },
+
+      { title: "已钉住", when: "人工判断「再看看」",
+        name: "au2610", price: "962.4", chg: "+0.18%", chgStyle: "color:#26a69a",
+        rule: "kdzx-long", ruleStyle: "color:" + DIM, ago: "9 分钟前",
+        cellStyle: cell(), bar: bar(false), pinStyle: pin("on"),
+        chart: true, candles: this.candles(21, true),
+        marks: [{ x: 205, y: 40, ty: 43.2, letter: "B", color: "#26a69a" }],
+        why: "钉图标转实心蓝且常显。这是整个功能里\n唯一需要人动手的操作，一次点击。" },
+
+      { title: "无规则盯着", when: "钉住了一个没人盯的品种",
+        name: "ag2612", price: "8,436", chg: "—", chgStyle: "color:" + DIM,
+        rule: "手动钉住", ruleStyle: "color:" + DIM, ago: "无规则",
+        cellStyle: cell(), bar: bar(false), pinStyle: pin("on"),
+        chart: false, candles: [], marks: [],
+        note: "没有规则盯 ag2612\n盯盘进程不采集它的行情", action: "开始采集",
+        why: "**静默的空是最危险的。** 必须说清为什么空，\n并且给一个当场能解决的按钮。" },
+
+      { title: "空槽", when: "组还没坐满",
+        name: "", price: "", chg: "", chgStyle: "", rule: "", ruleStyle: "", ago: "",
+        cellStyle: cell(), bar: bar(false), pinStyle: pin("off"),
+        chart: false, candles: [], marks: [],
+        note: "等待信号",
+        why: "现在规则只覆盖 7 个标的，九格坐不满是常态。\n空槽要看着像「留着位子」，不像「坏了」。" },
+
+      { title: "悬停", when: "鼠标停在格子上",
+        name: "cu2610", price: "71,880", chg: "-0.31%", chgStyle: "color:#ef5350",
+        rule: "kdzx-short", ruleStyle: "color:" + ACC, ago: "14 分钟前",
+        cellStyle: cell(";outline:1px solid " + ACC + ";outline-offset:-1px"),
+        bar: bar(true), pinStyle: pin("hover"),
+        chart: true, candles: this.candles(33, false),
+        marks: [{ x: 205, y: 52, ty: 55.2, letter: "S", color: "#ef5350" }],
+        why: "沿用现有 .cell:hover 的 1px accent 内描边。\n双击放大也沿用现有九宫格的交互。" },
+    ];
+    return { tiles };
+  }
+}
+</script>
+</body>
+</html>

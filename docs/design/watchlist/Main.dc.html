@@ -1,0 +1,304 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #0e1116; color: #e6edf3;
+      font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+    a { color: #58a6ff; } a:hover { color: #79bbff; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-variant-numeric: tabular-nums; }
+    .lbl { color: #8b949e; font-size: 11px; letter-spacing: .3px; }
+    .cell:hover .pin-idle { opacity: 1; }
+  </style>
+</helmet>
+
+<div style="width: 1320px; height: 812px; display: flex; flex-direction: column; background: #0e1116">
+
+  <!-- 工具条：与 .chart-head 同规格（padding 9px 14px，gap 14px，下边框 1px #262c36） -->
+  <div style="display: flex; align-items: center; gap: 14px; padding: 9px 14px;
+              border-bottom: 1px solid #262c36; flex: none">
+    <div style="display: flex; gap: 2px">
+      <sc-for list="{{modes}}" as="m" hint-placeholder-count="2">
+        <button onClick="{{m.pick}}" style="{{m.style}}">{{m.label}}</button>
+      </sc-for>
+    </div>
+    <span class="lbl">周期</span>
+    <div style="display: flex; gap: 2px">
+      <sc-for list="{{tfs}}" as="t" hint-placeholder-count="5">
+        <button onClick="{{t.pick}}" style="{{t.style}}">{{t.label}}</button>
+      </sc-for>
+    </div>
+    <div style="flex: 1"></div>
+    <span class="lbl">{{slotNote}}</span>
+  </div>
+
+  <!-- 市场 tab：与 .tabs/.tab 同规格。未读数挂在 tab 上 -->
+  <div style="display: flex; gap: 4px; padding: 8px 16px 0;
+              border-bottom: 1px solid #262c36; flex: none">
+    <sc-for list="{{markets}}" as="k" hint-placeholder-count="2">
+      <button onClick="{{k.pick}}" style="{{k.style}}">
+        <span>{{k.label}}</span>
+        <sc-if value="{{k.unread}}" hint-placeholder-val="{{ true }}">
+          <span style="{{k.badgeStyle}}">{{k.unread}}</span>
+        </sc-if>
+      </button>
+    </sc-for>
+  </div>
+
+  <!-- 九宫格：gap 1px，底色 #262c36 当分隔线（与现有 .grid 完全一致） -->
+  <div style="flex: 1; min-height: 0; display: grid;
+              grid-template-columns: repeat(3, minmax(0, 1fr));
+              grid-template-rows: repeat(3, minmax(0, 1fr));
+              gap: 1px; background: #262c36">
+    <sc-for list="{{cells}}" as="c" hint-placeholder-count="9">
+      <div class="cell" style="{{c.cellStyle}}">
+
+        <!-- 空槽 -->
+        <sc-if value="{{c.isEmpty}}" hint-placeholder-val="{{ false }}">
+          <div style="flex: 1; display: flex; align-items: center; justify-content: center;
+                      border: 1px dashed #262c36; margin: 8px; border-radius: 6px">
+            <span class="lbl">等待信号</span>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{c.isReal}}" hint-placeholder-val="{{ true }}">
+          <!-- 头部：与 .cell-head 同规格（padding 4px 8px，gap 7px，下边框） -->
+          <div style="display: flex; align-items: center; gap: 7px; padding: 4px 8px;
+                      flex: none; border-bottom: 1px solid #262c36">
+            <span style="{{c.unreadBar}}"></span>
+            <span class="mono" style="color: #e6edf3; font-size: 12px">{{c.name}}</span>
+            <button onClick="{{c.toggle}}" class="{{c.pinClass}}" style="{{c.pinStyle}}"
+                    title="钉住：不被新信号挤掉">
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none"
+                   stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                   stroke-linejoin="round">
+                <path d="M9.5 1.5 L14.5 6.5 L12 7 L8.5 10.5 L8 13.5 L2.5 8 L5.5 7.5 L9 4 Z"></path>
+                <line x1="2.5" y1="13.5" x2="6" y2="10"></line>
+              </svg>
+            </button>
+            <span class="mono" style="margin-left: auto; font-size: 10.5px; color: #8b949e;
+                                      white-space: nowrap">{{c.price}}</span>
+            <span class="mono" style="font-size: 10.5px; {{c.chgStyle}}">{{c.chg}}</span>
+          </div>
+
+          <!-- 触发理由：它为什么在这个组里。不写就是一堆无差别的小图 -->
+          <div style="display: flex; align-items: center; gap: 6px; padding: 3px 8px; flex: none">
+            <span class="mono" style="font-size: 10.5px; {{c.ruleStyle}}">{{c.rule}}</span>
+            <span class="lbl" style="margin-left: auto">{{c.ago}}</span>
+          </div>
+
+          <!-- 图区 -->
+          <div style="flex: 1; min-height: 0; position: relative; padding: 0 4px 4px">
+            <sc-if value="{{c.noData}}" hint-placeholder-val="{{ false }}">
+              <div style="position: absolute; inset: 0; display: flex; flex-direction: column;
+                          align-items: center; justify-content: center; gap: 8px;
+                          text-align: center; padding: 8px">
+                <span class="lbl" style="line-height: 1.6">没有规则盯 {{c.short}}<br>盯盘进程不采集它的行情</span>
+                <button style="background: #161b22; color: #58a6ff; border: 1px solid #58a6ff;
+                               border-radius: 6px; padding: 4px 10px; font-size: 11px;
+                               font-family: inherit; cursor: pointer">开始采集</button>
+              </div>
+            </sc-if>
+            <sc-if value="{{c.hasChart}}" hint-placeholder-val="{{ true }}">
+              <svg viewBox="0 0 260 120" preserveAspectRatio="none"
+                   style="width: 100%; height: 100%; display: block">
+                <sc-for list="{{c.candles}}" as="k" hint-placeholder-count="26">
+                  <rect x="{{k.wx}}" y="{{k.wy}}" width="1" height="{{k.wh}}" fill="{{k.color}}"></rect>
+                  <rect x="{{k.x}}" y="{{k.y}}" width="6" height="{{k.h}}" fill="{{k.color}}"></rect>
+                </sc-for>
+                <sc-for list="{{c.mas}}" as="m" hint-placeholder-count="2">
+                  <polyline points="{{m.pts}}" fill="none" stroke="{{m.color}}" stroke-width="1"></polyline>
+                </sc-for>
+                <sc-for list="{{c.marks}}" as="s" hint-placeholder-count="1">
+                  <circle cx="{{s.x}}" cy="{{s.y}}" r="7" fill="{{s.color}}"></circle>
+                  <text x="{{s.x}}" y="{{s.ty}}" text-anchor="middle" fill="#0e1116"
+                        font-size="9" font-weight="700"
+                        font-family="ui-monospace, Menlo, monospace">{{s.letter}}</text>
+                </sc-for>
+              </svg>
+            </sc-if>
+          </div>
+        </sc-if>
+      </div>
+    </sc-for>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{"$preview":{"width":1320,"height":812}}'>
+class Component extends DCLogic {
+  constructor(p) {
+    super(p);
+    // 钉住是这个组里**唯一需要人动手**的状态；其余（谁在组里、排第几）都是算出来的
+    this.state = { market: "CN", tf: "5m", mode: "watch", pinned: ["CN.SHFE.rb2610"] };
+  }
+
+  // 确定性伪随机：同一个标的每次画出同样的 K 线，改代码时 diff 才干净
+  seeded(seed) {
+    let s = seed;
+    return () => { s = (s * 1103515245 + 12345) % 2147483648; return s / 2147483648; };
+  }
+
+  candles(seed, up) {
+    const rnd = this.seeded(seed);
+    const out = [];
+    let v = 60;
+    const closes = [];
+    for (let i = 0; i < 26; i += 1) {
+      const drift = up ? -0.9 : 0.9;
+      const o = v;
+      v = v + (rnd() - 0.5) * 14 + drift;
+      if (v < 14) v = 14;
+      if (v > 104) v = 104;
+      const hi = Math.min(o, v) - rnd() * 7;
+      const lo = Math.max(o, v) + rnd() * 7;
+      const rise = v < o;
+      out.push({
+        x: i * 10 + 2, y: Math.min(o, v), h: Math.max(Math.abs(v - o), 1.5),
+        wx: i * 10 + 4.5, wy: hi, wh: lo - hi,
+        color: rise ? "#26a69a" : "#ef5350",
+      });
+      closes.push(v);
+    }
+    return { out, closes };
+  }
+
+  ma(closes, n, color) {
+    const pts = [];
+    for (let i = 0; i < closes.length; i += 1) {
+      if (i < n - 1) continue;
+      let sum = 0;
+      for (let j = i - n + 1; j <= i; j += 1) sum += closes[j];
+      pts.push((i * 10 + 5) + "," + (sum / n).toFixed(1));
+    }
+    return { pts: pts.join(" "), color };
+  }
+
+  renderVals() {
+    const st = this.state;
+    const ACC = "#58a6ff", DIM = "#8b949e", FG = "#e6edf3", LINE = "#262c36", PANEL = "#161b22";
+
+    const seg = (on) => "padding:3px 9px;border:1px solid " + (on ? ACC : LINE)
+      + ";background:" + PANEL + ";color:" + (on ? FG : DIM)
+      + ";border-radius:5px;font-size:11px;cursor:pointer;font-family:inherit";
+
+    const modes = [
+      { key: "watch", label: "预警组 · 九标的" },
+      { key: "tf", label: "九周期 · 单标的" },
+    ].map((m) => ({ label: m.label, style: seg(st.mode === m.key),
+                    pick: () => this.setState({ mode: m.key }) }));
+
+    const tfs = ["1m", "5m", "15m", "30m", "1h"].map((t) => ({
+      label: t, style: seg(st.tf === t), pick: () => this.setState({ tf: t }) }));
+
+    const tabStyle = (on) => "background:none;border:none;color:" + (on ? FG : DIM)
+      + ";padding:8px 14px;cursor:pointer;border-bottom:2px solid "
+      + (on ? ACC : "transparent") + ";font-size:13px;font-family:inherit;"
+      + "display:flex;align-items:center;gap:7px";
+
+    const markets = [
+      { key: "CN", label: "期货", unread: 3 },
+      { key: "CRYPTO", label: "加密", unread: 1 },
+    ].map((k) => ({
+      label: k.label, unread: k.unread,
+      style: tabStyle(st.market === k.key),
+      badgeStyle: "display:inline-flex;align-items:center;justify-content:center;"
+        + "min-width:17px;height:17px;padding:0 5px;border-radius:999px;"
+        + "background:" + ACC + ";color:#0e1116;font-size:10px;font-weight:700;"
+        + "font-family:ui-monospace,Menlo,monospace",
+      pick: () => this.setState({ market: k.key }),
+    }));
+
+    const DATA = {
+      CN: [
+        { uid: "CN.SHFE.rb2610", short: "rb2610", price: "3,118", chg: "+0.42%", up: true,
+          rule: "kdzx-long", ago: "2 分钟前", unread: true, seed: 7 },
+        { uid: "CN.SHFE.au2610", short: "au2610", price: "962.4", chg: "+0.18%", up: true,
+          rule: "kdzx-long", ago: "9 分钟前", unread: true, seed: 21 },
+        { uid: "CN.SHFE.cu2610", short: "cu2610", price: "71,880", chg: "-0.31%", up: false,
+          rule: "kdzx-short", ago: "14 分钟前", unread: true, seed: 33 },
+        { uid: "CN.CFFEX.IF2609", short: "IF2609", price: "3,842.6", chg: "-0.07%", up: false,
+          rule: "kdzx-short", ago: "41 分钟前", unread: false, seed: 45 },
+        { uid: "CN.DCE.m2701", short: "m2701", price: "3,204", chg: "+0.09%", up: true,
+          rule: "volume-spike", ago: "1 小时前", unread: false, seed: 58 },
+        { uid: "CN.SHFE.ni2610", short: "ni2610", price: "118,240", chg: "+0.24%", up: true,
+          rule: "volume-spike", ago: "1 小时前", unread: false, seed: 72 },
+        { uid: "CN.DCE.i2701", short: "i2701", price: "742.5", chg: "-0.15%", up: false,
+          rule: "kdzx-short", ago: "2 小时前", unread: false, seed: 84 },
+        { uid: "CN.SHFE.ag2612", short: "ag2612", price: "8,436", chg: "—", up: true,
+          rule: "手动钉住", ago: "无规则", unread: false, seed: 66, noData: true },
+      ],
+      CRYPTO: [
+        { uid: "CRYPTO.OKX.BTCUSDT.PERP", short: "BTCUSDT", price: "78,257.4", chg: "+0.61%",
+          up: true, rule: "kdzx-long", ago: "刚刚", unread: true, seed: 11 },
+        { uid: "CRYPTO.OKX.ETHUSDT.PERP", short: "ETHUSDT", price: "2,463.5", chg: "-0.22%",
+          up: false, rule: "volume-spike", ago: "23 分钟前", unread: false, seed: 29 },
+      ],
+    };
+
+    const rows = DATA[st.market] || [];
+    // 组 = 钉住的（按钉住顺序）∪ 最近触发的，钉住的永远在前。**只有 pinned 是状态**
+    const pinnedRows = st.pinned.map((u) => rows.find((r) => r.uid === u)).filter(Boolean);
+    const rest = rows.filter((r) => st.pinned.indexOf(r.uid) < 0);
+    const ordered = pinnedRows.concat(rest).slice(0, 9);
+
+    const cells = [];
+    for (let i = 0; i < 9; i += 1) {
+      const r = ordered[i];
+      if (!r) {
+        cells.push({ isEmpty: true, isReal: false, cellStyle:
+          "background:#0e1116;min-width:0;min-height:0;display:flex;flex-direction:column" });
+        continue;
+      }
+      const pinned = st.pinned.indexOf(r.uid) >= 0;
+      const c = this.candles(r.seed, r.up);
+      const last = c.closes[c.closes.length - 6];
+      cells.push({
+        isEmpty: false, isReal: true,
+        name: r.short, short: r.short, price: r.price, chg: r.chg,
+        rule: r.rule, ago: r.ago,
+        noData: !!r.noData, hasChart: !r.noData,
+        chgStyle: "color:" + (r.chg === "—" ? DIM : (r.up ? "#26a69a" : "#ef5350")),
+        ruleStyle: "color:" + (r.unread ? ACC : DIM),
+        // 未读：头部左侧一条 2px 竖条 + 整格内描边。看过就消掉，
+        // 没有这个状态，扫第二遍时分不清哪个是新的
+        unreadBar: r.unread
+          ? "width:2px;height:12px;border-radius:1px;background:" + ACC + ";flex:none"
+          : "width:2px;height:12px;flex:none",
+        cellStyle: "background:#0e1116;min-width:0;min-height:0;display:flex;"
+          + "flex-direction:column;cursor:pointer;position:relative"
+          + (r.unread ? ";outline:1px solid " + ACC + ";outline-offset:-1px" : ""),
+        pinClass: pinned ? "pin-on" : "pin-idle",
+        pinStyle: "background:none;border:none;padding:0;cursor:pointer;display:flex;"
+          + "align-items:center;color:" + (pinned ? ACC : DIM)
+          + ";opacity:" + (pinned ? "1" : "0") + ";transition:opacity .12s",
+        candles: c.out,
+        mas: [this.ma(c.closes, 5, "#d8a657"), this.ma(c.closes, 10, "#58a6ff")],
+        marks: r.noData ? [] : [{ x: 205, y: last, ty: last + 3.2,
+          letter: r.up ? "B" : "S", color: r.up ? "#26a69a" : "#ef5350" }],
+        toggle: () => {
+          const next = st.pinned.indexOf(r.uid) >= 0
+            ? st.pinned.filter((u) => u !== r.uid)
+            : st.pinned.concat([r.uid]);
+          this.setState({ pinned: next });
+        },
+      });
+    }
+
+    const nPinned = st.pinned.filter((u) => rows.some((r) => r.uid === u)).length;
+    return {
+      modes, tfs, markets, cells,
+      slotNote: ordered.length + " / 9 格 · 钉住 " + nPinned + " 个（钉住的不会被新信号挤掉）",
+    };
+  }
+}
+</script>
+</body>
+</html>

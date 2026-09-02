@@ -38,7 +38,9 @@ from ..store.parquet_io import read_range
 from ..store.runtime_store import RuntimeStore
 from .health import HealthMonitor
 from .intraday import build_intraday
+from .markers import collapse, pair_trades
 from .overlay import moving_averages
+from .watchlist import SLOTS, build_group, latest_by_symbol
 
 STATIC_DIR = pathlib.Path(__file__).parent / "static"
 MAX_BARS = 5000
@@ -95,9 +97,24 @@ class ServiceState:
     # 规则写端点（FR-5.3）。**默认关闭** —— 面板本身没有鉴权，
     # 部署到公网 VPS 时不该顺手带上写能力。由 serve.py --allow-edit 打开。
     edit_enabled: bool = False
+    # 面板是否绑在回环地址上。**钉住/取消钉住按它放行** —— 钉住会让盯盘进程
+    # 多采集一个标的（对外请求、耗行情配额），所以它是写操作；但把它关在
+    # --allow-edit 后面等于这个功能没法日常用。按绑定地址放行是折中：
+    # 默认 127.0.0.1 开箱可用，--host 0.0.0.0 暴露到网上时自动拒绝。
+    local_only: bool = True
 
     def now_ts(self) -> int:
         return int(dt.datetime.now(dt.UTC).timestamp())
+
+    def require_local(self) -> None:
+        """钉住类端点的前置检查。见 ``local_only``。"""
+        if not self.local_only:
+            raise HTTPException(
+                403,
+                "面板绑在非回环地址上，已禁用钉住。钉住会让盯盘进程多采集一个标的，"
+                "而面板没有鉴权。要远程用请开 SSH 隧道："
+                "ssh -L 8000:127.0.0.1:8000 <host>",
+            )
 
     def require_edit(self) -> None:
         """规则编辑相关端点的前置检查。写端点与试算都要过。
@@ -297,18 +314,6 @@ def create_app(state: ServiceState) -> FastAPI:
             "points": [p.as_dict() for p in points],
         }
 
-    @app.get("/api/chains")
-    def chains() -> dict[str, Any]:
-        """规则链路状态：哪些标的已布防、TTL 剩几根、谁在冷却。
-
-        这是引擎**当下**的状态快照，不是历史 —— 只在同进程模式（`watch.py --web`）下有。
-        独立只读模式没有引擎，如实返回空列表加一句说明，不假装。
-        """
-        if state.engine is None:
-            return {"live": False, "chains": [],
-                    "note": "未接入实时引擎（独立只读模式）—— 链路状态是引擎的内存状态，落不了盘"}
-        return {"live": True, "now_ts": state.now_ts(), "chains": state.engine.chain_states()}
-
     @app.get("/api/trade")
     def trade(limit: int = Query(200, ge=1, le=5000)) -> dict[str, Any]:
         """纸上账户与成交记录。
@@ -364,22 +369,18 @@ def create_app(state: ServiceState) -> FastAPI:
             i = bisect.bisect_left(closes, ts)  # 日线：收盘不早于该时刻的第一根
             return closes[i] if i < len(closes) else -1
 
-        out, dropped = [], []
+        placed, dropped = [], []
         for r in rows:
             fired = int(r["fired_at"])
             bucket = bucket_of(fired)
             if bucket not in stamps:
                 dropped.append({"dedup_key": r["dedup_key"], "fired_at": r["fired_at"]})
                 continue
-            out.append({
-                "bucket_ts": bucket,
-                "fired_at": int(r["fired_at"]),
-                "direction": r["direction"],
-                "rule_id": r["rule_id"],
-                "dedup_key": r["dedup_key"],
-                "trigger_price": float(r["trigger_price"]),
-            })
-        out.sort(key=lambda m: (m["bucket_ts"], m["dedup_key"]))
+            placed.append({**r, "bucket_ts": bucket})
+        # 同一根 bar 上的多条信号折成一枚「×N」。链路长度参与选代表，所以要把
+        # 当前规则的段数喂进去；规则已被删掉的老信号按 1 段算（拿不到就别猜）。
+        chain_len = {rule.id: len(rule.conditions) for rule in state.rules}
+        out = collapse(placed, chain_len)
 
         # 成交点。信号是"我认为该进场"，成交是"实际以什么价成交了" —— 两件事，
         # 图上必须分开画。以前只画信号，所以"看不到成交的具体价格点"。
@@ -406,8 +407,75 @@ def create_app(state: ServiceState) -> FastAPI:
             "signals": len(rows),
             "markers": out,
             "fills": fills,
+            "trades": pair_trades(fills, _notional(state, symbol, fills)),
             "dropped": dropped,
         }
+
+    @app.get("/api/watchlist")
+    def watchlist() -> dict[str, Any]:
+        """预警组：每个市场九个格子里放哪些标的。
+
+        **组不是一份维护出来的名单，是算出来的**（见 web/watchlist.py）：
+        钉住的 ∪ 最近触发的，取前九。只有「钉住」落库，其余每次重算 ——
+        没有淘汰逻辑，也就没有淘汰 bug。
+
+        一次把所有市场都返回：市场只有两个、每个至多九格，省得前端为了
+        tab 上的未读数再逐个市场拉一遍。「未读」是每个人自己的状态，
+        服务端只给最新那条信号的 ``dedup_key``，由前端跟本地已读集合比对。
+        """
+        pinned = state.runtime.pins()
+        rows = state.runtime.signals()
+        latest = latest_by_symbol(rows)
+        watched = {u for rule in state.rules for u in rule.universe}
+
+        out: dict[str, Any] = {"slots": SLOTS, "markets": [], "local_only": state.local_only}
+        for market, label in (("CN", "期货"), ("CRYPTO", "加密")):
+            # uid 的第一段就是市场（CN.SHFE.rb2610 / CRYPTO.OKX.BTCUSDT.PERP）。
+            # 每个市场一组独立的九格：不然一条加密信号会把你钉着的螺纹挤掉，
+            # 而这两个市场的作息完全不同（期货有夜盘和休市，加密 7×24）。
+            def of(uid: str, m: str = market) -> bool:
+                return uid.split(".")[0] == m
+
+            mine = [u for u in pinned if of(u)]
+            group = build_group(mine, [r for r in latest if of(str(r["symbol"]))], SLOTS)
+            entries = []
+            for e in group:
+                uid = e["symbol"]
+                sym = state.registry.symbols.get(uid) if state.registry else None
+                entries.append({
+                    **e,
+                    # 没注册的标的（钉住之后从 symbols.yaml 里删了）如实标出来，
+                    # 而不是让格子静默地空着。短名由前端的 shortSym() 统一算，
+                    # 服务端再算一套迟早两边显示不一致。
+                    "known": sym is not None,
+                    # 没有规则盯 ⇒ 盯盘进程不采集它 ⇒ 图会一直是空的。
+                    # 这条必须传给前端说清楚，不然就是又一个静默的空。
+                    "watched": uid in watched,
+                })
+            out["markets"].append({
+                "key": market, "label": label,
+                "pinned_over_slots": max(0, len(mine) - SLOTS),
+                "entries": entries,
+            })
+        return out
+
+    @app.post("/api/watchlist/pin")
+    def pin(body: dict[str, Any]) -> dict[str, Any]:
+        """钉住：人工判断「还需要观察」的唯一表达。钉住的不会被新信号挤掉。"""
+        state.require_local()
+        uid = str(body.get("symbol") or "").strip()
+        if not uid:
+            raise HTTPException(400, "缺少 symbol")
+        if state.registry is not None and uid not in state.registry.symbols:
+            raise HTTPException(404, f"未注册的标的 {uid}；请先补进 config/symbols.yaml")
+        added = state.runtime.pin(uid, state.now_ts())
+        watched = any(uid in rule.universe for rule in state.rules)
+        return {"symbol": uid, "pinned": True, "added": added, "watched": watched}
+
+    @app.delete("/api/watchlist/pin")
+    def unpin(symbol: str) -> dict[str, Any]:
+        state.require_local()
+        return {"symbol": symbol, "pinned": False, "removed": state.runtime.unpin(symbol)}
 
     @app.get("/api/stats")
     def stats(
@@ -612,8 +680,31 @@ def create_app(state: ServiceState) -> FastAPI:
     return app
 
 
+def _notional(state: ServiceState, symbol: str, fills: list[dict[str, Any]]) -> dict[str, float]:
+    """每笔交易的名义本金：开仓价 × 手数 × 合约乘数。盈亏百分比的分母。
+
+    registry 不在（独立只读模式）就返回空表 —— 于是 ``pnl_pct`` 为 None、
+    前端显示破折号。**别退化成乘数 1**：期货一手十吨，那样算出来的百分比
+    看着像模像样，其实差一个量级，比不显示危险得多。
+    """
+    if state.registry is None:
+        return {}
+    try:
+        mult = state.registry.symbol(symbol).multiplier or 1.0
+    except KeyError:
+        return {}
+    out: dict[str, float] = {}
+    for f in fills:
+        if str(f["kind"]) != "entry":
+            continue
+        base = float(f["price"]) * float(f["qty"]) * mult
+        if base > 0:
+            out[str(f["signal_key"])] = base
+    return out
+
+
 def _row_to_signal(row: dict[str, Any]) -> Signal:
-    from ..rules.model import Direction
+    from ..rules.model import Direction, Priority
 
     return Signal(
         rule_id=row["rule_id"],
@@ -626,7 +717,7 @@ def _row_to_signal(row: dict[str, Any]) -> Signal:
         context=dict(row.get("context") or {}),
         role_bars=dict(row.get("role_bars") or {}),
         tentative=bool(row.get("tentative")),
-        priority=row.get("priority", "normal"),
+        priority=Priority.coerce(row.get("priority", "normal")),
         trading_day=row.get("trading_day"),
     )
 

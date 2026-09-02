@@ -65,6 +65,46 @@ class Direction(StrEnum):
     NEUTRAL = "neutral"
 
 
+class Priority(StrEnum):
+    """信号档位。规则里手写，用来决定密集处折叠时**留谁当代表**。
+
+    收成枚举而不是自由字符串：原来 loader 直接 ``str(...)``，把 ``high`` 敲成
+    ``higth`` 照收不误，静默多出一个谁也没定义的档位 —— 排序时它既不高也不低，
+    表现就是"这条规则的信号偶尔莫名其妙被别的盖住"，且没有任何报错。
+    """
+
+    HIGH = "high"
+    NORMAL = "normal"
+    LOW = "low"
+
+    @property
+    def rank(self) -> int:
+        """越大越重要。排序键直接取负号用，别在调用处再写映射表。"""
+        return {Priority.LOW: 0, Priority.NORMAL: 1, Priority.HIGH: 2}[self]
+
+    @staticmethod
+    def parse(value: object) -> Priority:
+        """严格解析：给配置用，未知值报错。"""
+        try:
+            return Priority(str(value).strip().lower())
+        except ValueError:
+            allowed = ", ".join(p.value for p in Priority)
+            raise ValueError(f"未知的 priority {value!r}；只能是 {allowed}") from None
+
+    @staticmethod
+    def coerce(value: object) -> Priority:
+        """宽松解析：给**读历史数据**用。
+
+        枚举是后加的，早先落盘的信号里可能存着任意字符串。读回时报错会让整个
+        面板打不开 —— 历史数据不该因为今天收紧了口径而变成毒丸，落回 normal 即可。
+        写入路径仍然是严格的，所以脏值只会越来越少。
+        """
+        try:
+            return Priority(str(value).strip().lower())
+        except ValueError:
+            return Priority.NORMAL
+
+
 @dataclass(frozen=True, slots=True)
 class RuleCondition:
     role: str  # trend / setup / trigger 或自定义；单级别规则用周期名当角色
@@ -80,7 +120,7 @@ class RuleEmit:
     cooldown_s: int = 0
     dedup_key: str = DEFAULT_DEDUP_KEY
     channels: tuple[str, ...] = ()
-    priority: str = "normal"
+    priority: Priority = Priority.NORMAL
     # 恒为 True：盘中预报尚未实现，加载器会拒绝 false（见 loader）。
     confirm_on_close: bool = True
     # 链路推进到"只差最后一段"之后，多少根**扳机周期** bar 内没触发就作废。0 = 不限。
@@ -172,7 +212,7 @@ class Signal:
     # 推送内容、Web 回看与"为什么这一刻触发"的复盘都要它。
     role_bars: dict[str, int] = field(default_factory=dict)
     tentative: bool = False  # 盘中预报（INV-2）：不进统计、不下单
-    priority: str = "normal"
+    priority: Priority = Priority.NORMAL
     trading_day: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
@@ -187,9 +227,51 @@ class Signal:
             "context": dict(self.context),
             "role_bars": dict(self.role_bars),
             "tentative": self.tentative,
-            "priority": self.priority,
+            "priority": str(self.priority),
             "trading_day": self.trading_day,
         }
+
+
+def rank_key(
+    *,
+    tentative: bool,
+    priority: Priority,
+    timeframe: Timeframe,
+    chain_len: int,
+    rule_id: str,
+) -> tuple[Any, ...]:
+    """折叠时的排序键，**越小越优先**（直接给 ``sorted`` 用）。
+
+    逐级比较，每一级的理由：
+
+    1. ``tentative``：盘中预报永远排在已确认之后。INV-2 已规定它不进统计，
+       展示上也不该压过一条真信号。
+    2. 声明档位：规则里手写的 high/normal/low。放在周期前面 —— 那是人主动标的，
+       应当能压过自动规则。
+    3. 扳机周期：**大周期优先**。日线的判断比 1m 的重，也正是"看大做小"的顺序。
+    4. 链路长度：跨三个级别验证过的，比单条件的可信。
+    5. ``rule_id`` 字典序：**兜底，保证全序**。少了它，两条各项都相等的规则谁当代表
+       取决于字典迭代顺序 —— 回放和实盘会折出不同的代表，直接违反"replay 与 live
+       逐条一致"这条红线，而且只在有并列时偶发，最难查。
+
+    **方向不参与排序**：多空同时触发是矛盾信息，调用方必须分组而不是折叠
+    （见 ``web/markers.collapse``）。折成一个代表等于把矛盾藏起来。
+
+    取键而不是直接比较对象：信号从 SQLite 读回来时是一行 dict，没有 Signal 实例。
+    两边各写一套比较逻辑迟早排出两种顺序，所以口径只有这一处。
+    """
+    return (tentative, -priority.rank, -timeframe.rank, -chain_len, rule_id)
+
+
+def signal_rank(signal: Signal, chain_len: int = 1) -> tuple[Any, ...]:
+    """``rank_key`` 的 Signal 版本。口径在 ``rank_key``，这里只负责取字段。"""
+    return rank_key(
+        tentative=signal.tentative,
+        priority=signal.priority,
+        timeframe=signal.timeframe,
+        chain_len=chain_len,
+        rule_id=signal.rule_id,
+    )
 
 
 __all__ = [
@@ -197,9 +279,12 @@ __all__ = [
     "DEFAULT_DEDUP_KEY",
     "Direction",
     "Mode",
+    "Priority",
     "Rule",
     "RuleCondition",
     "RuleEmit",
     "Signal",
+    "rank_key",
+    "signal_rank",
     "parse_duration",
 ]

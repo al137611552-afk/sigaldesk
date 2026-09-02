@@ -34,6 +34,7 @@ from .model import (
     DEFAULT_DEDUP_KEY,
     Direction,
     Mode,
+    Priority,
     Rule,
     RuleCondition,
     RuleEmit,
@@ -41,6 +42,15 @@ from .model import (
 )
 
 _TTL = re.compile(r"^\s*(\d+)\s*(?:bars?)?\s*$", re.IGNORECASE)
+
+
+def _priority(raw: object, rule_id: str) -> Priority:
+    """档位必须是已知值。写错一个字母就静默多一个谁也没定义的档位，
+    表现是"这条规则的信号偶尔被别的盖住"且毫无提示 —— 宁可拒绝启动。"""
+    try:
+        return Priority.parse(raw)
+    except ValueError as exc:
+        raise RuleError(f"规则 {rule_id} 的 {exc}") from None
 
 
 def _get_on(cond: dict[Any, Any]) -> str:
@@ -219,7 +229,7 @@ def load_rule(raw: dict[str, Any]) -> Rule:
         cooldown_s=parse_duration(emit_raw.get("cooldown", 0)),
         dedup_key=str(emit_raw.get("dedup_key", DEFAULT_DEDUP_KEY)),
         channels=tuple(str(c) for c in (emit_raw.get("channels") or ())),
-        priority=str(emit_raw.get("priority", "normal")),
+        priority=_priority(emit_raw.get("priority", "normal"), rule_id),
         confirm_on_close=confirm_raw,
         ttl_bars=ttl_bars,
     )

@@ -185,6 +185,21 @@ const symSelPick = async (label) => {
   if (withBars) { await symSelPick(withBars); await page.waitForTimeout(1200); }
   await page.locator('#grid-toggle').click();
   await page.waitForTimeout(3500);
+  // 网格默认落在**预警组**（九标的×一周期）。先拍它，再切到九周期模式 ——
+  // 下面那几步（十字线同步、放大一格）要的是周期模式的格子。
+  await shot('panel-15-预警组');
+  const tabs = await page.$$('#wl-tabs .wl-tab');
+  if (tabs.length > 1) {
+    await page.click('#wl-tabs .wl-tab:nth-child(2)');
+    await page.waitForTimeout(2500);
+    await shot('panel-16-预警组-加密');
+    await page.click('#wl-tabs .wl-tab:nth-child(1)');
+    await page.waitForTimeout(2500);
+  }
+  // 切到九周期模式。**不切的话下面按 .cell 下标取格子会取到空槽**
+  // （空槽没有 .cell-body），脚本会卡在 boundingBox 上超时 —— 已经踩过一次。
+  await page.click('#grid-mode [data-mode="tf"]');
+  await page.waitForTimeout(3500);
   await shot('panel-11-九宫格');
   // 十字线跨周期同步：悬停一格，九格显示同一时刻。静态图看不出"跟随"，
   // 所以 shift+单击锁定后再截 —— 锁定态下九条十字线都停在同一时刻。

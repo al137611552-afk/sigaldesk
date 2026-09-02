@@ -55,21 +55,6 @@ const FIX = {
     condition_counts: { "CRYPTO.OKX.BTCUSDT.PERP": {
       trend: { true: 4, false: 2, unknown: 5 }, trigger: { true: 1, false: 30, unknown: 0 } } },
     rule: { id: "r1", timeframe: "1m", universe: [], levels: [] }, range: [0, 2147483648] },
-  "/api/chains": { live: true, now_ts: 1788140000, chains: [
-    { rule_id: "r1", symbol: "CRYPTO.OKX.BTCUSDT.PERP", phase: "armed", stage: 1, chain_len: 2,
-      ttl_left: 4, ttl_bars: 6, armed_at: 1788139800, cooldown_until: null, cooldown_s: 600,
-      last_fired_ts: null, steps: [
-        { role: "trend", timeframe: "15m", mode: "state", within: 1, when: "close > ema(close,5)",
-          done: true, satisfied: true, last_ts: 1788139800 },
-        { role: "trigger", timeframe: "1m", mode: "event", within: 1, when: "cross_up(close, ema(close,10))",
-          done: false, satisfied: false, last_ts: 1788139860 }] },
-    { rule_id: "r1", symbol: "CN.SHFE.rb2610", phase: "cooldown", stage: 1, chain_len: 2,
-      ttl_left: 0, ttl_bars: 6, armed_at: null, cooldown_until: 1788140600, cooldown_s: 600,
-      last_fired_ts: 1788140000, steps: [
-        { role: "trend", timeframe: "15m", mode: "state", when: "x", done: true, satisfied: true,
-          last_ts: 1788139800 },
-        { role: "trigger", timeframe: "1m", mode: "event", when: "y", done: false, satisfied: false,
-          last_ts: null }] }] },
   "/api/trade": { live: true, total_fills: 3,
     fills: [
       { signal_key: "k1", symbol: "CRYPTO.OKX.BTCUSDT.PERP", side: "buy", qty: 0.05,
@@ -106,32 +91,78 @@ const FIX = {
       fired_at: 1788139860, trigger_price: 77000.5, dedup_key: "k1",
       context: { close: 77000.5, volume: 12, "trend.ema5": 76990.25, rsi14: null },
       role_bars: { trend: 1788139800, trigger: 1788139860 } }] },
-  "/api/bars": { symbol: "X", timeframe: "1m", total: 2, bars: [
+  // bar 序列要**盖住所有标记与成交的分桶**：交易带的断点必须落在真实 bar 时刻上，
+  // 桩里少几根就等于把 drawTrades 整段跳过（这条测试当初就是这么假绿的）。
+  "/api/bars": { symbol: "X", timeframe: "1m", total: 5, bars: [
     { open_ts: 1788139740, close_ts: 1788139800, open: 1, high: 2, low: 0.5, close: 1.5, volume: 3, trading_day: null },
-    { open_ts: 1788139800, close_ts: 1788139860, open: 1.5, high: 2, low: 1, close: 1.8, volume: 4, trading_day: null }],
+    { open_ts: 1788139800, close_ts: 1788139860, open: 1.5, high: 2, low: 1, close: 1.8, volume: 4, trading_day: null },
+    { open_ts: 1788139860, close_ts: 1788139920, open: 1.8, high: 2.2, low: 1.4, close: 2.0, volume: 5, trading_day: null },
+    { open_ts: 1788140340, close_ts: 1788140400, open: 2.0, high: 2.4, low: 1.9, close: 2.2, volume: 6, trading_day: null },
+    { open_ts: 1788140400, close_ts: 1788140460, open: 2.2, high: 2.5, low: 2.0, close: 2.3, volume: 7, trading_day: null }],
     // 均线由服务端算，预热期是 null —— 前端必须**跳过**这些点，不能补 0
-    ma: [{ kind: "sma", window: 5, source: "close", label: "SMA5", values: [null, 1.65] },
-         { kind: "sma", window: 20, source: "close", label: "SMA20", values: [null, null] }],
+    ma: [{ kind: "sma", window: 5, source: "close", label: "SMA5",
+           values: [null, 1.65, 1.9, 2.1, 2.25] },
+         { kind: "sma", window: 20, source: "close", label: "SMA20",
+           values: [null, null, null, null, null] }],
     vma: [{ kind: "sma", window: 20, source: "volume", label: "VSMA20",
-            values: [null, 3.5] }] },
+            values: [null, 3.5, 4, 4.5, 5] }] },
   "/api/intraday": { symbol: "X", trading_day: "2026-08-31", multiplier: 1,
     points: [{ ts: 1788139800, price: 77000.5, avg: 76980.2 },
              { ts: 1788139860, price: 77010.0, avg: 76990.0 },
              { ts: 1788139920, price: 77020.0, avg: null }] },
+  // 与 web/markers.collapse / pair_trades 的真实返回同形：markers 是**分组**
+  // （带 count / members），trades 是配好对的交易。桩比服务端少一个字段，
+  // 冒烟就测不到那条路径 —— 折叠上线时正是这么漏掉一次崩溃的。
   "/api/markers": { symbol: "X", timeframe: "1m", signals: 4,
     markers: [
       { bucket_ts: 1788139800, fired_at: 1788139800, direction: "long", rule_id: "r1",
-        dedup_key: "k1", trigger_price: 77000.5 },
+        dedup_key: "k1", trigger_price: 77000.5, priority: "high", count: 2,
+        members: [
+          { rule_id: "r1", dedup_key: "k1", fired_at: 1788139800, trigger_price: 77000.5,
+            priority: "high", timeframe: "5m" },
+          { rule_id: "r9", dedup_key: "k9", fired_at: 1788139800, trigger_price: 77000.5,
+            priority: "normal", timeframe: "1m" }] },
       { bucket_ts: 1788139860, fired_at: 1788139860, direction: "short", rule_id: "r1",
-        dedup_key: "k3", trigger_price: 77100.0 },
+        dedup_key: "k3", trigger_price: 77100.0, priority: "normal", count: 1,
+        members: [{ rule_id: "r1", dedup_key: "k3", fired_at: 1788139860,
+                    trigger_price: 77100.0, priority: "normal", timeframe: "1m" }] },
       { bucket_ts: 1788139920, fired_at: 1788139920, direction: "neutral", rule_id: "r1",
-        dedup_key: "k4", trigger_price: 77050.0 }],
+        dedup_key: "k4", trigger_price: 77050.0, priority: "normal", count: 1,
+        members: [{ rule_id: "r1", dedup_key: "k4", fired_at: 1788139920,
+                    trigger_price: 77050.0, priority: "normal", timeframe: "1m" }] }],
     fills: [
       { bucket_ts: 1788139860, ts: 1788139860, kind: "entry", side: "buy",
         price: 77010.2, qty: 0.05, realized: 0, signal_key: "k1" },
       { bucket_ts: 1788140400, ts: 1788140400, kind: "target", side: "sell",
         price: 77400.0, qty: 0.05, realized: 18.03, signal_key: "k1" }],
+    trades: [
+      { signal_key: "k1", side: "buy", open: false, realized: 18.03, pnl_pct: 0.4682,
+        entry: { ts: 1788139860, bucket_ts: 1788139860, price: 77010.2,
+                 kind: "entry", side: "buy" },
+        exit: { ts: 1788140400, bucket_ts: 1788140400, price: 77400.0,
+                kind: "target", side: "sell" } },
+      { signal_key: "k3", side: "sell", open: true, realized: null, pnl_pct: null,
+        entry: { ts: 1788139920, bucket_ts: 1788139920, price: 77100.0,
+                 kind: "entry", side: "sell" },
+        exit: null }],
     dropped: [{ dedup_key: "k2", fired_at: 1788139860 }] },
+  // 预警组。组由服务端算好（web/watchlist.py），前端只画 —— 桩要跟真实返回同形，
+  // 少一个字段冒烟就测不到那条路径（折叠上线时正是这么漏掉一次崩溃的）。
+  "/api/watchlist": { slots: 9, local_only: true, markets: [
+    { key: "CN", label: "期货", pinned_over_slots: 0, entries: [
+      { symbol: "CN.SHFE.rb2610", pinned: true, rule_id: "kdzx-long", direction: "long",
+        fired_at: 1788139800, dedup_key: "wl-pinned", trigger_price: 3120,
+        known: true, watched: true },
+      { symbol: "CN.SHFE.rb.CONT", pinned: false, rule_id: "volume-spike", direction: "short",
+        fired_at: 1788139860, dedup_key: "wl-unread", trigger_price: 3100,
+        known: true, watched: true },
+      { symbol: "CN.SHFE.ag2612", pinned: true, rule_id: null, direction: null,
+        fired_at: null, dedup_key: null, trigger_price: null,
+        known: true, watched: false }] },
+    { key: "CRYPTO", label: "加密", pinned_over_slots: 0, entries: [
+      { symbol: "CRYPTO.OKX.BTCUSDT.PERP", pinned: false, rule_id: "kdzx-long",
+        direction: "long", fired_at: 1788139920, dedup_key: "wl-btc",
+        trigger_price: 78000, known: true, watched: true }] }] },
   "/api/stats": { overall: { signals: 2, evaluated: 2, directional: 2, wins: 1, losses: 1,
       win_rate: 0.5, avg_return: 0.001, median_return: 0.001, total_return: 0.002,
       avg_win: 0.01, avg_loss: -0.008, payoff: 1.25, false_rate: 0.5, target_rate: 0.5,
@@ -170,8 +201,25 @@ function el() {
     get className() { return [...node.classes].join(" "); },
     set className(v) { node.classes = new Set(String(v).split(/\s+/).filter(Boolean)); },
     children: [],
-    appendChild(c) { node.children.push(c); return c; },
-    remove() {}, onclick: null, onchange: null, onsubmit: null,
+    parentElement: null,
+    /* appendChild / remove **真的维护父子关系**。原来 remove() 是空实现，
+       于是"切模式时另一种模式的格子有没有被摘干净"这类事冒烟根本测不到 ——
+       格子在网格里越堆越多也照样绿。桩比真实 DOM 少一个行为，
+       就等于那条路径没有测试。 */
+    appendChild(c) {
+      if (c && c.parentElement) c.parentElement.removeChild(c);
+      node.children.push(c);
+      if (c) c.parentElement = node;
+      return c;
+    },
+    removeChild(c) {
+      const i = node.children.indexOf(c);
+      if (i >= 0) node.children.splice(i, 1);
+      if (c) c.parentElement = null;
+      return c;
+    },
+    remove() { if (node.parentElement) node.parentElement.removeChild(node); },
+    onclick: null, onchange: null, onsubmit: null,
     onmouseenter: null, onmouseleave: null, setAttribute() {}, style: {},
     clientWidth: 800, clientHeight: 400,
   };
@@ -195,9 +243,13 @@ const get = (sel) => {
    所以把 app.js 真正查过的 #id 拿去和 index.html 对一遍。 */
 const INDEX = fs.readFileSync(
   path.join(path.dirname(APP), "index.html"), "utf8");
+const APPSRC = fs.readFileSync(APP, "utf8");
+// 元素可以来自静态 HTML，**也可以由 app.js 自己生成**（如折叠按钮）。
+// 两种都算"存在"，只认 index.html 会把动态元素误报成缺失。
 const missingIds = () => [...asked]
   .filter((s) => /^#[\w-]+$/.test(s))
-  .filter((s) => !INDEX.includes(`id="${s.slice(1)}"`))
+  .filter((s) => !INDEX.includes(`id="${s.slice(1)}"`)
+              && !APPSRC.includes(`id="${s.slice(1)}"`))
   .sort();
 
 class FormData {
@@ -243,20 +295,32 @@ const sandbox = {
   setTimeout, clearTimeout,
   requestAnimationFrame: (fn) => setTimeout(fn, 0),
   // 桩要覆盖 app.js 真正用到的每个图表 API —— 少一个方法 boot() 就整页失败
-  LightweightCharts: { createChart: () => ({
+  LightweightCharts: { createChart: () => (sandbox.__chart = {
     // 桩要覆盖 app.js 用到的**每一个**图表 API，少一个 boot() 就整页失败
     addHistogramSeries: () => ({ setData(d) { sandbox.__vol = d; }, setMarkers() {},
       applyOptions() {}, createPriceLine: (o) => o, removePriceLine() {} }),
     priceScale: () => ({ applyOptions() {} }),
     // 记下 priceScaleId：量能均线画在成交量那条轴上，价均线在默认轴 ——
     // 靠顺序区分很脆，靠它挂的是哪条轴才准
-    addLineSeries: (o) => ({
-      setData(d) { (sandbox.__lines ||= []).push({ scale: (o || {}).priceScaleId || "right",
-                                                   n: d.length }); },
-      applyOptions() {}, setMarkers() {},
-      createPriceLine: (o) => o, removePriceLine() {} }),
+    addLineSeries: (o) => {
+      return {
+        setData(d) {
+          (sandbox.__lines ||= []).push({ scale: (o || {}).priceScaleId || "right",
+                                          n: d.length });
+        },
+        applyOptions() {}, setMarkers() {},
+        createPriceLine: (o) => o, removePriceLine() {} };
+    },
+    // 买卖点走自绘层（series primitive）。坐标换算给**确定、单调**的假映射，
+    // 冒烟才能断言"徽章画在触发价上"这条 —— 那正是内置 marker 做不到、
+    // 用户当场指出来的毛病（"没有和准确的价格对应"）。
     addCandlestickSeries: () => ({
-      setData() {}, setMarkers(m) { sandbox.__markers = m; },
+      setData() {}, setMarkers() {},
+      attachPrimitive(p) {
+        (sandbox.__primitives ||= []).push(p);
+        p.attached({ series: this, chart: sandbox.__chart, requestUpdate() {} });
+      },
+      priceToCoordinate: (price) => 1000 - price * 0.01,
       createPriceLine(o) { (sandbox.__priceLines ||= []).push(o); return o; },
       removePriceLine(o) {
         sandbox.__priceLines = (sandbox.__priceLines || []).filter((x) => x !== o);
@@ -267,7 +331,9 @@ const sandbox = {
       (sandbox.__xhairSet ||= []).push({ price, time });
     },
     clearCrosshairPosition() { (sandbox.__xhairClear ||= []).push(1); },
-    timeScale: () => ({ setVisibleLogicalRange() {}, fitContent() {} }) }) },
+    timeScale: () => ({ setVisibleLogicalRange() {}, fitContent() {},
+      // 每分钟一格、20px 宽，起点是夹具第一根 bar —— 确定、单调，便于逐点断言
+      timeToCoordinate: (t) => (t - 1788139800) / 60 * 20 }) }) },
   // 写端点也走这里：send() 会带 method/body，桩只按路径取夹具
   fetch: async (p, opts) => {
     calls.push((opts && opts.method ? opts.method + " " : "") + p);
@@ -296,7 +362,41 @@ setTimeout(async () => {
     // `const G` 是词法绑定，**不会挂到 vm 的全局对象上**（只有 function/var 会）——
     // sandbox.G 是 undefined，得用 runInContext 在同一上下文里求值。
     const G = () => vm.runInContext("G", sandbox);
+    // 网格默认落在**预警组**模式（G.mode = "watch"）。先验它，再切回周期模式 ——
+    // 两种模式共用一套格子构造，任一条路径崩了都得当场看见。
     await sandbox.toggleGrid(true);
+    const wcells = [...G().wcells.values()];
+    sandbox.__watch = {
+      mode: G().mode,
+      market: G().market,
+      tf: G().wtf,
+      symbols: [...G().wcells.keys()],
+      // 未读 = 有信号且不在已读集合里。钉住的那条也未读（还没点开过）
+      unread: wcells.filter((c) => c.root.classList.contains("unread")).map((c) => c.key),
+      pinned: wcells.filter((c) => c.pin.classList.contains("on")).map((c) => c.key),
+      why: wcells.map((c) => `${c.key}|${c.why._text}|${c.ago._text}`),
+      tabs_html: get("#wl-tabs")._html || "",
+      tabs_hidden: get("#wl-tabs").hidden,
+      // 没有规则盯的那格必须说清楚为什么空。按 entry.watched 判，不按 DOM ——
+      // 桩的 querySelector 对任何选择器都返回节点，用它筛等于没筛。
+      nodata: wcells.filter((c) => c.entry.watched === false).map((c) => c.key),
+      slots: G().slots.length,
+    };
+    // 点一下未读的格子 -> 转已读，tab 上的未读数跟着减
+    const unreadCell = wcells.find((c) => c.root.classList.contains("unread"));
+    if (unreadCell) unreadCell.root.onclick({ shiftKey: false });
+    sandbox.__watch.unread_after =
+      wcells.filter((c) => c.root.classList.contains("unread")).map((c) => c.key);
+    sandbox.__watch.tabs_after = get("#wl-tabs")._html || "";
+
+    // 切到周期模式
+    // 走真实的切换路径（renderGrid），不是直接改 G.mode ——
+    // 要测的正是"切模式时另一种模式的格子被摘干净、这一种被建起来"
+    vm.runInContext('G.mode = "tf"', sandbox);
+    await sandbox.renderGrid();
+    sandbox.__watch.mode_after = G().mode;
+    sandbox.__watch.wcells_detached = [...G().wcells.values()]
+      .every((c) => c.root.parentElement === null);
     sandbox.__grid = {
       cells: [...G().cells.keys()],
       loaded: [...G().cells.values()].filter((c) => c.head._text || c.head._html).length,
@@ -333,19 +433,14 @@ setTimeout(async () => {
   // 详情区默认显示**最新**一条信号，注入之后就会变成注入的那条 ——
   // 所以先把注入前的快照存下来，后面的断言仍针对真实夹具。
   const detailBefore = get("#detail").innerHTML;
-  // 未选中任何信号时的标注（成交只画点、不写价）
-  const marksUnselected = (sandbox.__markers || []).map(
-    (m) => `${m.shape}|${m.position}|${m.color}|${m.text}`);
-  // 选中带成交的那条信号后，它那几笔才显示价格
+  // 选中带成交的那条信号：它那几笔才写全（档位词 + 价格 + 盈亏）。
+  // marker_ops 是在这之后录的，所以录到的是**选中态**。
   try {
     await sandbox.select({ rule_id: "r1", symbol: "CRYPTO.OKX.BTCUSDT.PERP", direction: "long",
       timeframe: "1m", fired_at: 1788139800, trigger_price: 77000.5, dedup_key: "k1",
       context: {}, role_bars: {} });
     await new Promise((r) => setTimeout(r, 300));
   } catch { /* 选中失败不该影响其它断言 */ }
-  sandbox.__marksSelected = (sandbox.__markers || []).map(
-    (m) => `${m.shape}|${m.position}|${m.color}|${m.text}`);
-  sandbox.__marksUnselected = marksUnselected;
   const baseToasts = get("#toasts").children.length;
   const baseBeeps = sandbox.__beeps || 0;
   let alertError = "";
@@ -379,11 +474,34 @@ setTimeout(async () => {
   } catch (e) { rulesError = String(e && e.message || e); }
   try { await sandbox.trialRule(); } catch (e) { trialError = String(e && e.message || e); }
 
+  // 让自绘层真的画一遍。假 canvas 只管**记录几何**，不关心像素 ——
+  // 要断言的是"徽章画在 priceToCoordinate(触发价) 上"，那是内置 marker 做不到、
+  // 用户当场指出来的毛病（"没有和准确的价格对应"）。
+  const markerOps = (() => {
+    const prim = (sandbox.__primitives || [])[0];
+    if (!prim) return [];
+    const ctx = {
+      font: "", fillStyle: "", strokeStyle: "", lineWidth: 1,
+      textAlign: "", textBaseline: "",
+      measureText: (t) => ({ width: String(t).length * 6 }),
+      beginPath() {}, closePath() {}, moveTo() {}, lineTo() {}, arcTo() {}, arc() {},
+      fill() {}, stroke() {}, fillRect() {}, setLineDash() {}, fillText() {},
+    };
+    try {
+      prim.paneViews()[0].renderer().draw({
+        useMediaCoordinateSpace: (fn) =>
+          fn({ context: ctx, mediaSize: { width: 900, height: 600 } }),
+      });
+    } catch (e) { return ["draw failed: " + e.message]; }
+    return prim.ops();
+  })();
+
   console.log(JSON.stringify({
     endpoints: [...new Set(calls.map((c) => c.split("?")[0]))].sort(),
     missing_ids: missingIds(),
     grid_error: gridError,
     grid: sandbox.__grid || null,
+    watch: sandbox.__watch || null,
     sync: sandbox.__sync || null,
     alert_error: alertError,
     alerts: sandbox.__alertResult || null,
@@ -400,8 +518,6 @@ setTimeout(async () => {
     feed_html: get("#feed").innerHTML,
     detail_html: (typeof detailBefore === "string") ? detailBefore
       : get("#detail").innerHTML,
-    chains_html: get("#chain-grid").innerHTML,
-    chains_hidden: get("#chains").hidden,
     heroes_html: get("#heroes").innerHTML,
     exit_legend_html: get("#exit-legend").innerHTML,
     exc_note_html: get("#exc-note").innerHTML,
@@ -414,8 +530,8 @@ setTimeout(async () => {
     vma_lines: (sandbox.__lines || []).filter((x) => x.scale === "vol").map((x) => x.n),
     volume_points: (sandbox.__vol || []).length,
     volume_colors: [...new Set((sandbox.__vol || []).map((v) => v.color))].length,
-    marker_detail: sandbox.__marksUnselected || [],
-    marker_detail_selected: sandbox.__marksSelected || [],
+    marker_ops: markerOps,
+    marker_layers: (sandbox.__primitives || []).length,
     price_lines: (sandbox.__priceLines || []).map((l) => `${l.title}@${l.price}`),
     boot_failed: get("#app").innerHTML.includes("启动失败"),
     chart_note: get("#chart-note").textContent,

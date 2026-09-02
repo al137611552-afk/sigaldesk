@@ -1,7 +1,7 @@
 # M1 单级别示例：15m 上穿 20 均线且放量。
 # 多级别（趋势/回调/扳机三段式 + 状态机 + TTL）是 M2，目标形态见 docs/examples/m2-trend-pullback.yaml。
 id: ema-cross-long
-enabled: true
+enabled: false
 description: 15m 收盘上穿 EMA20，且量能高于 20 根均量的 1.5 倍
 
 universe:

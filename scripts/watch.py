@@ -29,6 +29,7 @@ import functools
 import os
 import pathlib
 import sys
+from collections.abc import Sequence
 from typing import Any
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
@@ -96,14 +97,23 @@ def build_notifier() -> MultiNotifier:
     return MultiNotifier(channels)
 
 
-def wanted_symbols(rules: list[Rule], registry: Registry) -> list[Symbol]:
-    uids = sorted({uid for r in rules for uid in r.universe})
+def wanted_symbols(
+    rules: list[Rule], registry: Registry, pinned: Sequence[str] = ()
+) -> list[Symbol]:
+    """要采集的标的：规则 universe **并上**预警组里钉住的。
+
+    钉住的也要采：钉住一个没有规则盯着的品种，本来会得到一个永远空着的格子 ——
+    而且是静默的空。用户在面板上钉了它，就是明确说了"我要看这个"。
+    """
+    from_rules = {uid for r in rules for uid in r.universe}
+    uids = sorted(from_rules | set(pinned))
     out: list[Symbol] = []
     for uid in uids:
         try:
             out.append(registry.symbol(uid))
         except KeyError:
-            print(f"⚠️  规则引用了未注册的标的 {uid}，已跳过")
+            src = "规则" if uid in from_rules else "预警组钉住的"
+            print(f"⚠️  {src}引用了未注册的标的 {uid}，已跳过")
     return out
 
 
@@ -128,12 +138,23 @@ async def fetch_crypto_history(
 
 async def fetch_futures_history(
     client: QuoteApiClient, registry: Registry, symbols: list[Symbol], bars: int
-) -> list[Bar]:
+) -> tuple[list[Bar], list[Symbol]]:
+    """取期货预热历史。返回 (bar, **真正取到了的标的**)。
+
+    **按标的降级，不是按市场**：五个品种里有一个拉不动（by-count 跨度大时会读超时），
+    不该把另外四个也一起放弃 —— 那是"一个坏苹果毁一筐"。
+    调用方据返回的标的列表决定实际订阅谁。
+    """
     now = int(dt.datetime.now(dt.UTC).timestamp())
     out: list[Bar] = []
+    ok: list[Symbol] = []
     for sym in symbols:
         assert sym.quote_code is not None
-        rows = await client.kline_by_count(sym.quote_code, Timeframe.M1, min(bars, 2000))
+        try:
+            rows = await client.kline_by_count(sym.quote_code, Timeframe.M1, min(bars, 2000))
+        except Exception as e:  # noqa: BLE001
+            print(f"  ⚠️  {sym.uid} 历史取失败，本次不盯它: {type(e).__name__}: {e}")
+            continue
         history = [
             b
             for b in normalize_klines(
@@ -144,7 +165,8 @@ async def fetch_futures_history(
         ]
         print(f"  取历史 {sym.uid}: {len(history)} 根 1m")
         out.extend(history)
-    return out
+        ok.append(sym)
+    return out, ok
 
 
 def apply_history(
@@ -230,12 +252,19 @@ async def run(
     if not rules:
         print("没有启用的规则（config/rules/ 为空？）")
         return 1
-    symbols = wanted_symbols(rules, registry)
+    # 钉住的标的要先读出来才能定采集列表 —— RuntimeStore 要到下面的
+    # AsyncExitStack 里才长期打开，这里开一次只为读这一张表。
+    with RuntimeStore(state_db) as _pins_db:
+        pinned = _pins_db.pins()
+    symbols = wanted_symbols(rules, registry, pinned)
     crypto = [s for s in symbols if s.market is Market.CRYPTO]
     futures = [] if crypto_only else [s for s in symbols if s.market is Market.CN_FUTURES]
 
     print(f"规则 {len(rules)} 条（来自 {rules_dir}）: {', '.join(r.id for r in rules)}")
     print(f"标的: 加密 {[s.code for s in crypto]} / 期货 {[s.code for s in futures]}")
+    extra = [u for u in pinned if all(u not in r.universe for r in rules)]
+    if extra:
+        print(f"  其中 {len(extra)} 个来自预警组钉住（没有规则盯它们）: {', '.join(extra)}")
 
     # **必须取并集**：watch.py 同时喂两个东西 —— 规则引擎（只要规则用到的周期）
     # 和面板图表（要全部可选周期）。只按规则派生的话，规则没用到的周期就**静默停更**，
@@ -302,8 +331,12 @@ async def run(
                     )
                     client = await stack.enter_async_context(QuoteApiClient(cfg))
                     print("取期货历史…")
-                    history += await fetch_futures_history(
+                    got, futures = await fetch_futures_history(
                         client, registry, futures, warmup_bars)
+                    history += got
+                    if not futures:
+                        print("  ⚠️  所有期货标的都取不到历史，本次不盯期货")
+                        client = None
                 except Exception as e:  # noqa: BLE001
                     print(f"  ⚠️  期货历史取失败，本次不盯期货: {type(e).__name__}: {e}")
                     futures = []

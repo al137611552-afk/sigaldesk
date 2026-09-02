@@ -1,7 +1,7 @@
 # 放量异动：1m 成交量突然放大到均量的 2.5 倍以上且收阳。
 # 用途是"有事发生了，去看一眼"，不是入场信号 —— 所以 direction 取 neutral。
 id: volume-spike
-enabled: true
+enabled: false
 description: 1m 放量 2.5 倍且收阳，提示异动
 
 # 一条规则同时挂在两个市场上 —— 这正是"双线并行"架构要换来的东西。

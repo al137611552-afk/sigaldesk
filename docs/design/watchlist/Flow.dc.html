@@ -1,0 +1,101 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #0e1116; color: #e6edf3;
+      font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+    a { color: #58a6ff; } a:hover { color: #79bbff; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-variant-numeric: tabular-nums; }
+    .lbl { color: #8b949e; font-size: 11px; letter-spacing: .3px; }
+  </style>
+</helmet>
+
+<div style="width: 1180px; height: 640px; padding: 28px 32px; display: flex;
+            flex-direction: column; gap: 24px; background: #0e1116">
+
+  <div style="display: flex; flex-direction: column; gap: 4px">
+    <div style="font-size: 17px; font-weight: 600">看大做小的三步闭环</div>
+    <div class="lbl" style="line-height: 1.7">
+      预警组不是第四个新页面，它是<span style="color:#e6edf3">同一个九宫格的第二种模式</span>。
+      十字线同步、均线、成交量、双击放大全部复用，切换只在工具条上多一对按钮。
+    </div>
+  </div>
+
+  <div style="display: flex; align-items: stretch; gap: 0; flex: 1; min-height: 0">
+    <sc-for list="{{steps}}" as="s" hint-placeholder-count="3">
+      <div style="display: flex; align-items: center; gap: 0; flex: 1; min-width: 0">
+        <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px;
+                    border: 1px solid #262c36; border-radius: 6px; padding: 14px; height: 100%">
+          <div style="display: flex; align-items: center; gap: 8px">
+            <span class="mono" style="{{s.numStyle}}">{{s.n}}</span>
+            <span style="font-size: 13px; color: #e6edf3">{{s.title}}</span>
+          </div>
+          <div style="flex: 1; min-height: 0; display: grid; gap: 1px; background: #262c36;
+                      {{s.gridStyle}}">
+            <sc-for list="{{s.tiles}}" as="t" hint-placeholder-count="9">
+              <div style="{{t.style}}">
+                <span class="mono" style="font-size: 9px; color: #8b949e">{{t.label}}</span>
+              </div>
+            </sc-for>
+          </div>
+          <div class="lbl" style="line-height: 1.6; white-space: pre-line; flex: none">{{s.note}}</div>
+        </div>
+        <sc-if value="{{s.arrow}}" hint-placeholder-val="{{ true }}">
+          <div style="flex: none; padding: 0 14px; display: flex; flex-direction: column;
+                      align-items: center; gap: 6px">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#58a6ff"
+                 stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="4" y1="12" x2="19" y2="12"></line>
+              <polyline points="13,6 19,12 13,18"></polyline>
+            </svg>
+            <span class="lbl" style="white-space: nowrap">{{s.arrow}}</span>
+          </div>
+        </sc-if>
+      </div>
+    </sc-for>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{"$preview":{"width":1180,"height":640}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const ACC = "#58a6ff";
+    const num = "display:inline-flex;align-items:center;justify-content:center;"
+      + "width:18px;height:18px;border-radius:999px;background:" + ACC
+      + ";color:#0e1116;font-size:10px;font-weight:700";
+    const tile = (on) => "background:#0e1116;display:flex;align-items:center;"
+      + "justify-content:center;min-width:0;min-height:0"
+      + (on ? ";outline:1px solid " + ACC + ";outline-offset:-1px" : "");
+
+    const g3 = "grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:repeat(3,minmax(0,1fr))";
+    const names = ["rb", "au", "cu", "IF", "m", "ag", "", "", ""];
+    const tfs = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w", "1mon"];
+
+    return {
+      steps: [
+        { n: "1", title: "预警组：横着扫", gridStyle: g3, arrow: "双击某格",
+          tiles: names.map((x, i) => ({ label: x, style: tile(i === 0 || i === 2) })),
+          note: "九个标的、同一个周期（默认 5m）。\n新触发的自动进组，钉住的不会被挤掉。" },
+        { n: "2", title: "九周期：竖着看", gridStyle: g3, arrow: "点进单图",
+          tiles: tfs.map((x, i) => ({ label: x, style: tile(i === 6 || i === 4) })),
+          note: "同一个标的的九个周期。\n大级别定方向 —— 这一步决定做不做。" },
+        { n: "3", title: "单图：找买点", gridStyle: "grid-template-columns:1fr",
+          arrow: "",
+          tiles: [{ label: "5m", style: tile(true) }],
+          note: "小级别找入场，看买卖点标记与价位线。\n这是现有的盯盘主图，不改。" },
+      ],
+    };
+  }
+}
+</script>
+</body>
+</html>

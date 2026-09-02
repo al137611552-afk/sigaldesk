@@ -1,0 +1,14 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html", "x": 0, "y": 0, "w": 1320, "h": 812, "title": "预警组主视图", "is_interactive": true },
+    { "file": "CellStates.dc.html", "x": 0, "y": 960, "w": 1180, "h": 760, "title": "单元格状态" },
+    { "file": "Flow.dc.html", "x": 1280, "y": 960, "w": 1180, "h": 640, "title": "三步闭环" }
+  ],
+  "annotations": [
+    { "id": "brief", "x": 1420, "y": 0, "w": 300,
+      "text": "可点：市场 tab、周期、模式切换、每格的钉图标（悬停出现）。\n\n组 = 钉住的 ∪ 最近触发的，取前 9。只有「钉住」是持久状态，其余每次算出来 —— 没有淘汰逻辑，也就没有淘汰 bug。" },
+    { "id": "no-options", "x": 1420, "y": 260, "w": 300,
+      "text": "期权没画：Market 枚举只有 CN 和 CRYPTO，没有行情源也没有合约表。空 tab 比没有 tab 更糟。" }
+  ],
+  "launch": { "view": "canvas" }
+}

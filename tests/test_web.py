@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from sigdesk.core.calendar import MarketCalendar
 from sigdesk.core.models import Bar, Timeframe
+from sigdesk.core.registry import load_registry
 from sigdesk.feed.okx import normalize_candles
 from sigdesk.rules.engine import RuleEngine
 from sigdesk.rules.loader import load_rule
@@ -107,6 +108,9 @@ def test_markers_match_the_signal_store_exactly(
     标注在服务端算（前端只负责画），所以这条能被真正测到：
     每条记录要么有一个标注、要么在 dropped 里，**不重不漏**；
     且每个标注的分桶必须确实存在于该周期的 bar 序列中。
+
+    密集处会把同一根 bar 同方向的多条折成一枚「×N」，所以逐条对账要看 ``members``
+    而不是顶层代表 —— 折叠**只改画法，不改账**：一条记录都不许在折叠中消失。
     """
     client, _ = wired
     recorded = client.get(f"/api/signals?symbol={BTC}&limit=5000").json()["signals"]
@@ -114,20 +118,26 @@ def test_markers_match_the_signal_store_exactly(
     bars = client.get(f"/api/bars?symbol={BTC}&timeframe={tf}&limit=5000").json()["bars"]
 
     assert data["signals"] == len(recorded)
-    marked = {m["dedup_key"] for m in data["markers"]}
+    members = [x for m in data["markers"] for x in m["members"]]
+    marked = {x["dedup_key"] for x in members}
     dropped = {d["dedup_key"] for d in data["dropped"]}
+    assert len(marked) == len(members), "同一条记录出现在多枚标注里"
     assert marked | dropped == {s["dedup_key"] for s in recorded}, "有记录既没标注也没进 dropped"
     assert not (marked & dropped), "同一条记录既标注又被丢弃"
+    assert sum(m["count"] for m in data["markers"]) == len(marked), "count 与成员数对不上"
 
     stamps = {b["close_ts"] for b in bars}
     period = {"1m": 60, "5m": 300, "15m": 900}[tf]
     by_key = {s["dedup_key"]: s for s in recorded}
     for m in data["markers"]:
         assert m["bucket_ts"] in stamps, "标注落在了一根不存在的 bar 上"
-        src = by_key[m["dedup_key"]]
-        assert m["bucket_ts"] == -(-src["fired_at"] // period) * period, "分桶与引擎不一致"
-        assert m["trigger_price"] == src["trigger_price"]
-        assert m["fired_at"] == src["fired_at"]
+        assert m["dedup_key"] == m["members"][0]["dedup_key"], "代表必须是排在最前的成员"
+        for x in m["members"]:
+            src = by_key[x["dedup_key"]]
+            assert m["bucket_ts"] == -(-src["fired_at"] // period) * period, "分桶与引擎不一致"
+            assert x["trigger_price"] == src["trigger_price"]
+            assert x["fired_at"] == src["fired_at"]
+            assert src["direction"] == m["direction"], "折叠把不同方向的信号并到了一起"
 
 
 def test_markers_do_not_snap_to_the_nearest_bar(
@@ -362,81 +372,6 @@ def _bar(ts: int, close: float, volume: float = 10.0) -> Bar:
     return Bar(BTC, Timeframe.M1, ts - 60, ts, close, close + 0.5, close - 0.5, close, volume)
 
 
-def test_chain_states_expose_what_the_engine_already_knows() -> None:
-    """面板原本只显示"已经发生的信号"，引擎其实还知道"正在酝酿什么"。
-
-    这条测的是那部分状态能被如实导出：阶段、TTL 剩余、每一段成不成立。
-    """
-    engine, store = _chain_engine()
-    for b in [_bar(60 * i, 101.0, volume=99.0) for i in range(1, 6)]:
-        engine.on_bars(store.push(b))
-
-    (row,) = engine.chain_states()
-
-    assert row["rule_id"] == "chain-demo" and row["symbol"] == BTC
-    assert row["phase"] == "armed", "趋势与回调都满足后应当处于已布防"
-    assert row["stage"] == 2 and row["chain_len"] == 3
-    assert row["ttl_left"] == 4 and row["ttl_bars"] == 4
-    assert row["armed_at"] is not None
-    assert [s["role"] for s in row["steps"]] == ["trend", "setup", "trigger"]
-    assert [s["timeframe"] for s in row["steps"]] == ["5m", "1m", "1m"]
-    assert [s["done"] for s in row["steps"]] == [True, True, False]
-    assert row["steps"][0]["satisfied"] is True
-    assert row["steps"][0]["when"] == "close > 100"
-
-
-def test_chain_states_reflect_cooldown_after_firing() -> None:
-    engine, store = _chain_engine()
-    bars = [_bar(60 * i, 101.0, volume=99.0) for i in range(1, 6)]
-    bars.append(Bar(BTC, Timeframe.M1, 300, 360, 100.5, 102.0, 100.0, 101.5, 99.0))
-    for b in bars:
-        engine.on_bars(store.push(b))
-
-    (row,) = engine.chain_states()
-
-    assert row["phase"] == "cooldown"
-    assert row["cooldown_until"] is not None and row["cooldown_s"] == 300
-    assert row["last_fired_ts"] is not None
-
-
-def test_chains_endpoint_says_so_without_an_engine(
-    wired: tuple[TestClient, ServiceState],
-) -> None:
-    """独立只读模式没有引擎 —— 链路状态是内存状态，落不了盘，要如实说，不能假装为空。"""
-    client, _ = wired
-    body = client.get("/api/chains").json()
-    assert body["live"] is False and body["chains"] == []
-    assert "未接入" in body["note"]
-
-
-def test_chains_endpoint_serves_engine_state(
-    wired: tuple[TestClient, ServiceState],
-) -> None:
-    client, state = wired
-    engine, store = _chain_engine()
-    for b in [_bar(60 * i, 101.0, volume=99.0) for i in range(1, 6)]:
-        engine.on_bars(store.push(b))
-    state.engine = engine
-
-    body = client.get("/api/chains").json()
-
-    assert body["live"] is True
-    assert len(body["chains"]) == 1
-    assert body["chains"][0]["phase"] == "armed"
-
-
-def test_chain_states_skip_rules_that_were_unloaded() -> None:
-    """规则下线后残留的实例不该出现在面板上。"""
-    engine, store = _chain_engine()
-    for b in [_bar(60 * i, 101.0, volume=99.0) for i in range(1, 4)]:
-        engine.on_bars(store.push(b))
-    engine._rules.clear()  # noqa: SLF001  模拟规则被移除
-    assert engine.chain_states() == []
-
-
-# ---------------------------------------------------------------- 纸上账户端点
-
-
 def test_trade_endpoint_says_so_without_a_desk(
     wired: tuple[TestClient, ServiceState],
 ) -> None:
@@ -661,3 +596,103 @@ def test_bars_endpoint_computes_ma_on_the_full_series(
     line = body["ma"][0]
     assert line["label"] == "SMA3" and len(line["values"]) == 5
     assert all(v is not None for v in line["values"]), "截出来的这 5 根应已过预热期"
+
+
+# ---------------------------------------------------------------- 预警组
+
+
+def test_watchlist_groups_by_market(wired: tuple[TestClient, ServiceState]) -> None:
+    """每个市场一组独立的九格。
+
+    不分开的话，一条加密信号会把你钉着的螺纹挤掉 —— 而这两个市场的作息
+    完全不同（期货有夜盘和休市，加密 7×24），混在一起扫没有意义。
+    """
+    client, _ = wired
+    d = client.get("/api/watchlist").json()
+    assert [m["key"] for m in d["markets"]] == ["CN", "CRYPTO"]
+    assert d["slots"] == 9
+    crypto = next(m for m in d["markets"] if m["key"] == "CRYPTO")
+    assert crypto["entries"], "夹具里的信号都是加密的，这组不该是空的"
+    assert all(e["symbol"].startswith("CRYPTO.") for e in crypto["entries"])
+    cn = next(m for m in d["markets"] if m["key"] == "CN")
+    assert cn["entries"] == [], "没有期货信号，期货组就该是空的"
+
+
+def test_watchlist_keeps_one_slot_per_symbol(
+    wired: tuple[TestClient, ServiceState],
+) -> None:
+    """夹具里同一个标的触发了很多条，组里仍然只占一格 ——
+    否则九格会被一个躁动的品种吃光。"""
+    client, _ = wired
+    d = client.get("/api/watchlist").json()
+    for m in d["markets"]:
+        uids = [e["symbol"] for e in m["entries"]]
+        assert len(uids) == len(set(uids)), uids
+
+
+def test_pinning_puts_a_symbol_first_and_keeps_it(
+    wired: tuple[TestClient, ServiceState],
+) -> None:
+    """钉住 = 人工判断「还需要观察」。钉住的排最前，且不会被新信号挤掉。"""
+    client, _ = wired
+    assert client.post("/api/watchlist/pin", json={"symbol": BTC}).status_code == 200
+    entries = _crypto(client)
+    assert entries[0]["symbol"] == BTC
+    assert entries[0]["pinned"] is True
+
+    assert client.delete(f"/api/watchlist/pin?symbol={BTC}").status_code == 200
+    assert all(e["pinned"] is False for e in _crypto(client))
+
+
+def test_pinning_an_unregistered_symbol_is_refused(
+    wired: tuple[TestClient, ServiceState],
+) -> None:
+    """钉一个不存在的标的会得到一个永远空着的格子，而且是静默的空。宁可拒绝。
+
+    校验要有 registry 才做得了 —— 独立只读模式（registry 为 None）拿不到
+    合约表，那时只能放行，这是有意的：宁可让只读模式少一道校验，
+    也不要因为拿不到合约表就把功能整个关掉。
+    """
+    client, state = wired
+    state.registry = load_registry(pathlib.Path(__file__).resolve().parents[1] / "config")
+    r = client.post("/api/watchlist/pin", json={"symbol": "CN.SHFE.nope"})
+    assert r.status_code == 404
+    assert "symbols.yaml" in r.json()["detail"], "要告诉人去哪儿补"
+
+    ok = client.post("/api/watchlist/pin", json={"symbol": "CN.SHFE.rb2610"})
+    assert ok.status_code == 200
+
+
+def test_watchlist_says_whether_anything_is_watching_the_symbol(
+    wired: tuple[TestClient, ServiceState],
+) -> None:
+    """**没有规则盯 ⇒ 盯盘进程不采集 ⇒ 图永远是空的。**
+
+    这条必须如实传给前端，否则又是一个静默的空 —— 这个项目已经在
+    「空状态不说明为什么」上栽过（用户当时以为是行情连不上）。
+    """
+    client, state = wired
+    client.post("/api/watchlist/pin", json={"symbol": BTC})
+    e = _crypto(client)[0]
+    assert e["watched"] is False, "夹具的 state.rules 是空的，所以没有规则盯它"
+
+    state.rules = [load_rule(RULE)]
+    assert _crypto(client)[0]["watched"] is True
+
+
+def test_pinning_is_refused_when_not_bound_to_loopback(
+    wired: tuple[TestClient, ServiceState],
+) -> None:
+    """钉住会让盯盘进程多采集一个标的（对外请求、耗行情配额），
+    而面板没有鉴权。绑到 0.0.0.0 时必须拒绝。"""
+    client, state = wired
+    state.local_only = False
+    r = client.post("/api/watchlist/pin", json={"symbol": BTC})
+    assert r.status_code == 403
+    assert "SSH" in r.json()["detail"], "拒绝时要给出可行的替代做法"
+    assert client.get("/api/watchlist").status_code == 200, "只读仍然可用"
+
+
+def _crypto(client: TestClient) -> list[dict[str, Any]]:
+    d = client.get("/api/watchlist").json()
+    return next(m for m in d["markets"] if m["key"] == "CRYPTO")["entries"]

@@ -27,7 +27,7 @@ from typing import Any
 
 from ..rules.model import Signal
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -83,6 +83,14 @@ CREATE TABLE IF NOT EXISTS fill (
     UNIQUE (signal_key, kind, ts)
 );
 CREATE INDEX IF NOT EXISTS fill_by_time ON fill (ts);
+-- 预警组里被「钉住」的标的。**这是预警组唯一的持久状态** ——
+-- 组里其余的格子由最近的信号算出来（见 web/watchlist.py），不落库。
+-- 放这里而不是浏览器：钉住会让盯盘进程开始采集这个标的（scripts/watch.py 要读它），
+-- 存在 localStorage 里的话采集端根本看不见。
+CREATE TABLE IF NOT EXISTS watchlist_pin (
+    symbol    TEXT    PRIMARY KEY,
+    pinned_at INTEGER NOT NULL
+);
 """
 
 
@@ -187,6 +195,36 @@ class RuntimeStore:
 
     # ------------------------------------------------------------ 信号
 
+    # ------------------------------------------------------------ 预警组
+
+    def pins(self) -> list[str]:
+        """钉住的标的，按钉住先后。顺序就是它们在预警组里的排位。"""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT symbol FROM watchlist_pin ORDER BY pinned_at, symbol"
+            ).fetchall()
+        return [str(r["symbol"]) for r in rows]
+
+    def pin(self, symbol: str, ts: int) -> bool:
+        """钉住。已钉住则**保持原来的时间**，不往后挪 —— 重复点一下不该改变排位。"""
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT OR IGNORE INTO watchlist_pin (symbol, pinned_at) VALUES (?, ?)",
+                (symbol, int(ts)),
+            )
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    def unpin(self, symbol: str) -> bool:
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM watchlist_pin WHERE symbol = ?", (symbol,)
+            )
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    # ------------------------------------------------------------ 信号
+
     def append_signals(self, signals: Iterable[Signal]) -> int:
         """落信号。同一 (rule, symbol, dedup_key) 只留一条 ——
         重启补喂时会重复产出同一条信号，靠这个唯一约束兜底，统计不会被重复计数污染。"""
@@ -194,7 +232,7 @@ class RuntimeStore:
             (
                 s.rule_id, s.symbol, str(s.direction), str(s.timeframe), s.fired_at,
                 s.trigger_price, s.dedup_key, json.dumps(s.context), json.dumps(s.role_bars),
-                int(s.tentative), s.priority, s.trading_day,
+                int(s.tentative), str(s.priority), s.trading_day,
             )
             for s in signals
         ]
