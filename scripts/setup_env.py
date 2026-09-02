@@ -40,6 +40,30 @@ FIELDS: list[tuple[str, str, bool]] = [
 ]
 
 
+def write_env(values: dict[str, str]) -> None:
+    """写用户级 .env。**只有本人可读写。**"""
+    USER_ENV.parent.mkdir(parents=True, exist_ok=True)
+    USER_ENV.write_text("".join(f"{k}={v}\n" for k, v in values.items() if v),
+                        encoding="utf-8")
+    # Windows 上 chmod 基本是空操作，但那边有 ACL 兜着（用户目录默认不对外）
+    with contextlib.suppress(OSError):
+        USER_ENV.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+
+def try_pin(base: str) -> str:
+    """抓 TLS 指纹。抓不到就返回空串 —— 网络不通不该让整个配置流程失败。"""
+    from urllib.parse import urlparse
+
+    from sigdesk.feed.quote_api import fetch_tls_fingerprint
+
+    try:
+        u = urlparse(base)
+        return fetch_tls_fingerprint(u.hostname or "", u.port or 443)
+    except Exception as exc:                      # noqa: BLE001 网络错误五花八门
+        print(f"  {type(exc).__name__}: {exc}")
+        return ""
+
+
 def show() -> int:
     """只报告**有没有配**，绝不打印值 —— 值进了终端就等于进了滚动缓冲区。"""
     load_env(ROOT)
@@ -83,12 +107,21 @@ def main() -> int:
             out[key] = value.strip()
         print()
 
-    USER_ENV.parent.mkdir(parents=True, exist_ok=True)
-    body = "".join(f"{k}={v}\n" for k, v in out.items() if v)
-    USER_ENV.write_text(body, encoding="utf-8")
-    # 只有本人可读写。Windows 上这行是空操作，但那边有 ACL 兜着。
-    with contextlib.suppress(OSError):
-        USER_ENV.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    # 指纹能自己抓就别让人手抄。原来要另跑 pin_tls.py、把一串 64 位十六进制
+    # 从终端复制到文件里 —— 那是最容易抄错、也最容易被跳过的一步，
+    # 跳过的后果是连不上（而不是不安全，客户端会拒绝）。
+    if out.get("QUOTE_API_BASE") and not out.get("QUOTE_API_TLS_FINGERPRINT"):
+        ans = input("没有 TLS 指纹。现在去抓一次？（需要能连上该地址）[Y/n] > ").strip().lower()
+        if ans in ("", "y", "yes"):
+            fp = try_pin(out["QUOTE_API_BASE"])
+            if fp:
+                out["QUOTE_API_TLS_FINGERPRINT"] = fp
+                print(f"  已抓到并写入（{fp[:12]}…）")
+            else:
+                print("  抓取失败，先留空；网络通了再跑 scripts/pin_tls.py --write")
+        print()
+
+    write_env(out)
     print(f"已写入 {USER_ENV}（{len([v for v in out.values() if v])} 项）")
     print("以后任何脚本、任何目录、任何新版本的包，都会自动读到它。")
     return 0

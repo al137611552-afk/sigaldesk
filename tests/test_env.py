@@ -100,3 +100,42 @@ def test_watch_degrades_per_market_instead_of_failing_whole() -> None:
     assert "QUOTE_API_BASE" in body and "setup_env.py" in body, (
         "缺凭据是最常见的启动失败，要说清楚缺哪个、怎么配")
     assert "没有任何行情源可用" in src, "两边都挂了才算真的起不来，且要说明原因"
+
+
+def test_pin_tls_reads_the_env_file_itself() -> None:
+    """`pin_tls.py` 必须自己 `load_env()`。
+
+    原来它只看 `os.environ`，于是用 `setup_env.py` 把凭据写进用户级 `.env` 之后
+    再跑它，仍然会报「请先 `set -a; . ./.env; set +a`」—— 那是一句 **bash 语法**，
+    Windows 上照着做也没用，用户会卡在这一步（RUN-WINDOWS.md 里正是这一步）。
+    """
+    src = pathlib.Path("scripts/pin_tls.py").read_text(encoding="utf-8")
+    assert "load_env(ROOT)" in src, "没有读 .env，配好了也会说没配"
+    # 只看**打给用户的**那几行；解释这个坑的注释里出现 "set -a" 是应该的
+    printed = [ln for ln in src.splitlines()
+               if "print(" in ln and not ln.strip().startswith("#")]
+    assert not any("set -a" in ln for ln in printed), "别再给 bash-only 的提示"
+    assert "setup_env.py" in src, "没配时要指向正确的下一步"
+
+
+def test_pin_tls_can_write_back() -> None:
+    """指纹能自己写回，不用手抄一串 64 位十六进制。
+
+    手抄是最容易抄错、也最容易被跳过的一步 —— 跳过的后果是连不上
+    （不是不安全：指纹缺失/不符时客户端会拒绝连接）。
+    """
+    src = pathlib.Path("scripts/pin_tls.py").read_text(encoding="utf-8")
+    assert '"--write"' in src
+    assert "from setup_env import write_env" in src, "写文件的口径要与 setup_env 共用一处"
+    assert "指纹**变了**" in src, "指纹变化可能是证书轮换，也可能是中间人，必须提醒"
+
+
+def test_setup_env_offers_to_pin_the_fingerprint() -> None:
+    """配完地址就顺手把指纹抓了 —— 少一步手工，就少一个被跳过的环节。
+
+    抓不到也**不能让整个配置流程失败**：网络不通是常事，凭据本身是有效的。
+    """
+    src = pathlib.Path("scripts/setup_env.py").read_text(encoding="utf-8")
+    assert "def try_pin(" in src
+    assert "return \"\"" in src, "抓取失败要返回空串继续，不是抛异常"
+    assert "pin_tls.py --write" in src, "失败时要告诉用户之后怎么补"

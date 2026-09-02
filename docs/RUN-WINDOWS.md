@@ -57,16 +57,20 @@ py -3.12 -m venv .venv
 .venv\Scripts\python.exe scripts\setup_env.py
 ```
 
-它写到 `C:\Users\<你>\.signal-desk\.env`。之后随时查状态（**只显示键名，不显示值**）：
+它写到 `C:\Users\<你>\.signal-desk\.env`，**配一次就够** ——
+以后换目录、换分支、换新版本的包都自动读到它，不用重配。
+填完地址和 key 它会问要不要顺手把 TLS 指纹抓了，回车即可。
+
+之后随时查状态（**只显示键名，不显示值**）：
 
 ```powershell
 .venv\Scripts\python.exe scripts\setup_env.py --show
 ```
 
-TLS 指纹只需抓一次：
+指纹单独重抓（换了证书之后要做一次）：
 
 ```powershell
-.venv\Scripts\python.exe scripts\pin_tls.py
+.venv\Scripts\python.exe scripts\pin_tls.py --write
 ```
 
 > 三个坑：
@@ -157,7 +161,7 @@ TLS 指纹只需抓一次：
 |---|---|
 | `pip install` 报 Python 版本 | 用成 3.11 了。`py -0p` 确认，用 `py -3.12` |
 | 面板打得开但图是空的 | 没回补历史，或那个标的没有规则盯着（格子里会写明）|
-| 期货连不上、加密正常 | key 或 TLS 指纹没配。`setup_env.py --show` 看键在不在 |
+| 期货连不上、加密正常 | key 或 TLS 指纹没配 / 证书换了指纹对不上。先 `setup_env.py --show` 看键在不在，再 `pin_tls.py --write` 重抓 |
 | 一直没有信号 | 正常。规则是多级别链路，几小时才一条很常见；「运行健康」页看行情有没有在进 |
 | 预警组里钉不动 | 面板绑了非回环地址。钉住会触发采集，那时会被拒绝 |
 | 端口被占 | `--web 127.0.0.1:8010`，或 `serve.py --port 8010` |
