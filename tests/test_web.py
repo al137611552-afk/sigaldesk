@@ -660,7 +660,10 @@ def test_pinning_an_unregistered_symbol_is_refused(
     assert r.status_code == 404
     assert "symbols.yaml" in r.json()["detail"], "要告诉人去哪儿补"
 
-    ok = client.post("/api/watchlist/pin", json={"symbol": "CN.SHFE.rb2610"})
+    # **不点名具体合约**：主力换月后 symbols.yaml 会跟着变（sync_symbols.py），
+    # 写死 rb2610 就会在换月后误伤这条测试，让人以为钉住功能坏了。
+    real = next(iter(state.registry.symbols))
+    ok = client.post("/api/watchlist/pin", json={"symbol": real})
     assert ok.status_code == 200
 
 
