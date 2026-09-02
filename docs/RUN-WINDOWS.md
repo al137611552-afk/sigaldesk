@@ -110,7 +110,14 @@ py -3.12 -m venv .venv
 .venv\Scripts\python.exe scripts\backfill.py CN.SHFE.au2610 2026-08-01 2026-09-01
 ```
 
-`config\symbols.yaml` 里的每个期货合约都要回补一遍。
+**一条命令补全部**（注册表里有 60 多个品种，逐个敲不现实）：
+
+```powershell
+.venv\Scripts\python.exe scripts\backfill_all.py --timeframe 1d --start 2024-01-01
+```
+
+一个品种失败不影响其余，末尾汇总；中断后重跑很便宜（已补好的会跳过）。
+实测 64 个品种约 5 分钟。
 
 **想看长历史的日线/周线/月线，别去回补长区间的 1m。** 高周期原本全靠 1m 聚合，
 回补三个月 1m 只得到 45 根日线、10 根周线、3 根月线；而拉两年 1m 每个品种约 12 万根。

@@ -93,3 +93,28 @@ def test_both_markets_coexist_under_one_root(
     assert sorted(d.name for d in tmp_path.iterdir()) == ["CN", "CRYPTO"]
     assert len(read_range(tmp_path, SYMBOL, Timeframe.M1, 0, FUTURE)) == 20
     assert len(read_range(tmp_path, CRYPTO_SYMBOL, Timeframe.M1, 0, FUTURE)) == 20
+
+
+def test_partition_span_reports_both_ends(tmp_path: pathlib.Path) -> None:
+    """**首尾都要给。**
+
+    只看末日的话，"补过近两个月"会被误判成"已覆盖两年"，拉长历史的请求
+    就被静默跳过 —— 数据看着有、其实短一大截。实测撞上过：批量回补时
+    au/m/cu 三个只有二十几到四十几根日线，却因为末日够新而被跳过。
+    """
+    from sigdesk.store.parquet_io import partition_span
+
+    root = tmp_path / "bars"
+    assert partition_span(root, "CN.SHFE.rb2610", Timeframe.D1) is None, "没数据要给 None"
+    for day, close in (("2026-01-05", 10.0), ("2026-03-09", 11.0), ("2026-02-02", 12.0)):
+        write_bars(root, [Bar("CN.SHFE.rb2610", Timeframe.D1, 0, 1, close, close, close,
+                              close, 1.0, trading_day=day)])
+    assert partition_span(root, "CN.SHFE.rb2610", Timeframe.D1) == ("2026-01-05", "2026-03-09")
+
+
+def test_partition_span_does_not_read_files(tmp_path: pathlib.Path) -> None:
+    """只列目录名。面板启动时要对每个标的问一遍，读文件会让 /api/meta 慢到肉眼可见。"""
+    src = pathlib.Path("src/sigdesk/store/parquet_io.py").read_text(encoding="utf-8")
+    fn = src[src.index("def partition_span("):]
+    fn = fn[: fn.index("\n\n\ndef ")]
+    assert "iterdir" in fn and "read_bars" not in fn and "parquet.read" not in fn

@@ -28,7 +28,8 @@
 |---|---|
 | `setup_env.py` | 配凭据到用户级目录，**只配一次**；`--show` 查状态（不显示值）|
 | `pin_tls.py --write` | 抓 TLS 指纹并写回；证书轮换后重跑一次 |
-| `backfill.py` | 回补历史 1m 并聚合出高周期 |
+| `backfill.py` | 回补单个标的（`--timeframe 1d` 拉长历史；加密自动走 OKX）|
+| `backfill_all.py` | **批量回补**注册表里的全部标的，按标的降级、可续跑 |
 | `build_continuous.py` | 拼主连（派生序列，不随盘更新）|
 | `report.py` | 终端版信号质量报告 |
 | `paper_run.py` | 纸上回测 |

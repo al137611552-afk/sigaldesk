@@ -43,6 +43,22 @@ def partition_path(root: pathlib.Path, symbol: str, timeframe: Timeframe, day: s
     return root / market / symbol / timeframe.value / f"{day}.parquet"
 
 
+def partition_span(
+    root: pathlib.Path, symbol: str, timeframe: Timeframe
+) -> tuple[str, str] | None:
+    """本地数据覆盖的 (首日, 末日)，没有数据返回 None。只列目录名，不读文件。
+
+    **要首尾都给**：只看末日会把"补过近两个月"误判成"已覆盖两年"，
+    于是拉长历史的请求被静默跳过 —— 数据看着有、其实短一大截。
+    """
+    d = partition_path(root, symbol, timeframe, "x").parent
+    try:
+        days = sorted(f.stem for f in d.iterdir() if f.suffix == ".parquet")
+    except OSError:
+        return None
+    return (days[0], days[-1]) if days else None
+
+
 def latest_partition(root: pathlib.Path, symbol: str, timeframe: Timeframe) -> str | None:
     """这个标的最后一个分区日（``YYYY-MM-DD``），没有数据返回 None。
 
@@ -146,6 +162,7 @@ def gaps(bars: list[Bar], timeframe: Timeframe) -> list[tuple[int, int]]:
 
 
 __all__ = [
+    "partition_span",
     "CST",
     "gaps",
     "partition_key",

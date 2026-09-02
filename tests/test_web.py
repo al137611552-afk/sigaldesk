@@ -784,3 +784,18 @@ def test_backfill_dispatches_crypto_to_okx() -> None:
     code_lines = [ln for ln in fn.splitlines() if not ln.strip().startswith("#")]
     assert any("sym.code" in ln for ln in code_lines)
     assert not any("ccxt_symbol" in ln for ln in code_lines)
+
+
+def test_batch_backfill_degrades_per_symbol() -> None:
+    """批量回补**一个标的失败不该带走其余**。
+
+    66 个品种跑一小时，中间挂一个就整体退出的话，前面的进度全白费。
+    失败的汇总在末尾，重跑本命令即可（已补好的会被跳过）。
+    """
+    src = pathlib.Path("scripts/backfill_all.py").read_text(encoding="utf-8")
+    fn = src[src.index("    ok, failed = 0, []"):src.index("    mins = ")]
+    assert "except Exception" in fn, "没有按标的降级"
+    assert "failed.append" in fn
+    assert "重跑本命令即可" in src, "要告诉用户失败之后怎么办"
+    # 主连不补 —— 它是 build_continuous.py 拼出来的派生序列
+    assert "reg.tradable()" in src and "主连" in src
