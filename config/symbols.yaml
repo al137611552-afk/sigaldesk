@@ -1,6 +1,15 @@
 # 由 scripts/sync_symbols.py 生成国内期货部分；加密与主连条目手工维护。
 # 换月后重跑这个脚本即可 —— 主力合约会跟着变。
 symbols:
+- uid: CN.CZCE.AP610
+  market: CN
+  exchange: CZCE
+  code: AP610
+  calendar: cn_no_night
+  quote_code: AP610
+  price_tick: 1
+  multiplier: 10
+  product: AP
 - uid: CN.CZCE.CF701
   market: CN
   exchange: CZCE
@@ -10,6 +19,15 @@ symbols:
   price_tick: 5
   multiplier: 5
   product: CF
+- uid: CN.CZCE.CJ701
+  market: CN
+  exchange: CZCE
+  code: CJ701
+  calendar: cn_no_night
+  quote_code: CJ701
+  price_tick: 5
+  multiplier: 5
+  product: CJ
 - uid: CN.CZCE.FG701
   market: CN
   exchange: CZCE
@@ -55,6 +73,15 @@ symbols:
   price_tick: 1
   multiplier: 10
   product: MA
+- uid: CN.CZCE.OI611
+  market: CN
+  exchange: CZCE
+  code: OI611
+  calendar: cn_night_23
+  quote_code: OI611
+  price_tick: 1
+  multiplier: 10
+  product: OI
 - uid: CN.CZCE.PF610
   market: CN
   exchange: CZCE
@@ -64,6 +91,51 @@ symbols:
   price_tick: 2
   multiplier: 5
   product: PF
+- uid: CN.CZCE.PK611
+  market: CN
+  exchange: CZCE
+  code: PK611
+  calendar: cn_no_night
+  quote_code: PK611
+  price_tick: 2
+  multiplier: 5
+  product: PK
+- uid: CN.CZCE.PL611
+  market: CN
+  exchange: CZCE
+  code: PL611
+  calendar: cn_night_23
+  quote_code: PL611
+  price_tick: 1
+  multiplier: 20
+  product: PL
+- uid: CN.CZCE.PR611
+  market: CN
+  exchange: CZCE
+  code: PR611
+  calendar: cn_no_night
+  quote_code: PR611
+  price_tick: 2
+  multiplier: 15
+  product: PR
+- uid: CN.CZCE.PX611
+  market: CN
+  exchange: CZCE
+  code: PX611
+  calendar: cn_night_23
+  quote_code: PX611
+  price_tick: 2
+  multiplier: 5
+  product: PX
+- uid: CN.CZCE.RM611
+  market: CN
+  exchange: CZCE
+  code: RM611
+  calendar: cn_night_23
+  quote_code: RM611
+  price_tick: 1
+  multiplier: 10
+  product: RM
 - uid: CN.CZCE.SA701
   market: CN
   exchange: CZCE
@@ -73,6 +145,33 @@ symbols:
   price_tick: 1
   multiplier: 20
   product: SA
+- uid: CN.CZCE.SF611
+  market: CN
+  exchange: CZCE
+  code: SF611
+  calendar: cn_no_night
+  quote_code: SF611
+  price_tick: 2
+  multiplier: 5
+  product: SF
+- uid: CN.CZCE.SH611
+  market: CN
+  exchange: CZCE
+  code: SH611
+  calendar: cn_night_23
+  quote_code: SH611
+  price_tick: 1
+  multiplier: 30
+  product: SH
+- uid: CN.CZCE.SM611
+  market: CN
+  exchange: CZCE
+  code: SM611
+  calendar: cn_no_night
+  quote_code: SM611
+  price_tick: 2
+  multiplier: 5
+  product: SM
 - uid: CN.CZCE.SR701
   market: CN
   exchange: CZCE
@@ -109,6 +208,15 @@ symbols:
   price_tick: 1
   multiplier: 10
   product: a
+- uid: CN.SHFE.ad2611
+  market: CN
+  exchange: SHFE
+  code: ad2611
+  calendar: cn_no_night
+  quote_code: ad2611
+  price_tick: 5
+  multiplier: 10
+  product: ad
 - uid: CN.SHFE.ag2610
   market: CN
   exchange: SHFE
@@ -127,6 +235,15 @@ symbols:
   price_tick: 5
   multiplier: 5
   product: al
+- uid: CN.SHFE.ao2610
+  market: CN
+  exchange: SHFE
+  code: ao2610
+  calendar: cn_night_01
+  quote_code: ao2610
+  price_tick: 1
+  multiplier: 20
+  product: ao
 - uid: CN.SHFE.au2610
   market: CN
   exchange: SHFE
@@ -136,6 +253,42 @@ symbols:
   price_tick: 0.02
   multiplier: 1000
   product: au
+- uid: CN.DCE.b2611
+  market: CN
+  exchange: DCE
+  code: b2611
+  calendar: cn_night_23
+  quote_code: b2611
+  price_tick: 1
+  multiplier: 10
+  product: b
+- uid: CN.SHFE.br2610
+  market: CN
+  exchange: SHFE
+  code: br2610
+  calendar: cn_night_23
+  quote_code: br2610
+  price_tick: 5
+  multiplier: 5
+  product: br
+- uid: CN.SHFE.bu2610
+  market: CN
+  exchange: SHFE
+  code: bu2610
+  calendar: cn_night_23
+  quote_code: bu2610
+  price_tick: 1
+  multiplier: 10
+  product: bu
+- uid: CN.DCE.bz2610
+  market: CN
+  exchange: DCE
+  code: bz2610
+  calendar: cn_night_23
+  quote_code: bz2610
+  price_tick: 1
+  multiplier: 30
+  product: bz
 - uid: CN.DCE.c2611
   market: CN
   exchange: DCE
@@ -163,6 +316,15 @@ symbols:
   price_tick: 10
   multiplier: 5
   product: cu
+- uid: CN.DCE.eb2610
+  market: CN
+  exchange: DCE
+  code: eb2610
+  calendar: cn_night_23
+  quote_code: eb2610
+  price_tick: 1
+  multiplier: 5
+  product: eb
 - uid: CN.DCE.eg2610
   market: CN
   exchange: DCE
@@ -172,6 +334,15 @@ symbols:
   price_tick: 1
   multiplier: 10
   product: eg
+- uid: CN.SHFE.fu2611
+  market: CN
+  exchange: SHFE
+  code: fu2611
+  calendar: cn_night_23
+  quote_code: fu2611
+  price_tick: 1
+  multiplier: 10
+  product: fu
 - uid: CN.DCE.i2701
   market: CN
   exchange: DCE
@@ -217,6 +388,15 @@ symbols:
   price_tick: 20
   multiplier: 1
   product: lc
+- uid: CN.DCE.lg2611
+  market: CN
+  exchange: DCE
+  code: lg2611
+  calendar: cn_no_night
+  quote_code: lg2611
+  price_tick: 0.5
+  multiplier: 90
+  product: lg
 - uid: CN.DCE.lh2611
   market: CN
   exchange: DCE
@@ -244,6 +424,15 @@ symbols:
   price_tick: 10
   multiplier: 1
   product: ni
+- uid: CN.SHFE.op2611
+  market: CN
+  exchange: SHFE
+  code: op2611
+  calendar: cn_night_23
+  quote_code: op2611
+  price_tick: 2
+  multiplier: 40
+  product: op
 - uid: CN.DCE.p2701
   market: CN
   exchange: DCE
@@ -262,6 +451,24 @@ symbols:
   price_tick: 5
   multiplier: 5
   product: pb
+- uid: CN.GFEX.pd2610
+  market: CN
+  exchange: GFEX
+  code: pd2610
+  calendar: cn_night_0230
+  quote_code: pd2610
+  price_tick: 0.05
+  multiplier: 1000
+  product: pd
+- uid: CN.DCE.pg2610
+  market: CN
+  exchange: DCE
+  code: pg2610
+  calendar: cn_night_23
+  quote_code: pg2610
+  price_tick: 1
+  multiplier: 20
+  product: pg
 - uid: CN.DCE.pp2701
   market: CN
   exchange: DCE
@@ -271,6 +478,24 @@ symbols:
   price_tick: 1
   multiplier: 5
   product: pp
+- uid: CN.GFEX.ps2611
+  market: CN
+  exchange: GFEX
+  code: ps2611
+  calendar: cn_no_night
+  quote_code: ps2611
+  price_tick: 5
+  multiplier: 3
+  product: ps
+- uid: CN.GFEX.pt2610
+  market: CN
+  exchange: GFEX
+  code: pt2610
+  calendar: cn_night_0230
+  quote_code: pt2610
+  price_tick: 0.05
+  multiplier: 1000
+  product: pt
 - uid: CN.SHFE.rb2701
   market: CN
   exchange: SHFE
@@ -316,6 +541,15 @@ symbols:
   price_tick: 10
   multiplier: 1
   product: sn
+- uid: CN.SHFE.sp2611
+  market: CN
+  exchange: SHFE
+  code: sp2611
+  calendar: cn_night_23
+  quote_code: sp2611
+  price_tick: 2
+  multiplier: 10
+  product: sp
 - uid: CN.DCE.v2701
   market: CN
   exchange: DCE

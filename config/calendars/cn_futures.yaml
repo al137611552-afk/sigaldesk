@@ -13,22 +13,22 @@ calendars:
   # 黑色系 / 多数农产品：夜盘 21:00-23:00
   cn_night_23:
     sessions: ["09:00-10:15", "10:30-11:30", "13:30-15:00", "21:00-23:00"]
-    products: [rb, hc, i, j, jm, m, y, p, a, c, cs, SR, CF, TA, MA, FG, v, pp, l, eg, ru]
+    products: [rb, hc, i, j, jm, m, y, p, a, c, cs, SR, CF, TA, MA, FG, v, pp, l, eg, ru, OI, PL, PX, RM, SH, b, br, bu, bz, eb, fu, op, pg, sp]
 
   # 有色：夜盘 21:00-01:00（跨零点）
   cn_night_01:
     sessions: ["09:00-10:15", "10:30-11:30", "13:30-15:00", "21:00-01:00"]
-    products: [cu, al, zn, pb, ni, sn, ss, bc]
+    products: [cu, al, zn, pb, ni, sn, ss, bc, ao]
 
   # 贵金属 / 原油：夜盘 21:00-02:30（跨零点）
   cn_night_0230:
     sessions: ["09:00-10:15", "10:30-11:30", "13:30-15:00", "21:00-02:30"]
-    products: [au, ag, sc]
+    products: [au, ag, sc, pd, pt]
 
   # 无夜盘
   cn_no_night:
     sessions: ["09:00-10:15", "10:30-11:30", "13:30-15:00"]
-    products: [jd, lh, UR, SA, PF, si, lc]
+    products: [jd, lh, UR, SA, PF, si, lc, AP, CJ, PK, PR, SF, SM, ad, lg, ps]
 
   # 金融期货：日盘时段与商品不同，无夜盘
   cffex_index:
