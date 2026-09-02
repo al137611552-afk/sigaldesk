@@ -1,4 +1,9 @@
-# 由 scripts/sync_symbols.py 生成国内期货部分；加密与主连条目手工维护。
+# 由 scripts/sync_symbols.py 生成国内期货部分；加密条目手工维护。
+#
+# **主连（rb.CONT）已不再登记。** 它是 build_continuous.py 从历次主力合约拼出来的
+# 派生序列，不可下单、也不随盘更新 —— 登记在这里只会让它出现在标的下拉框里，
+# 点进去是一张停在拼接那天的图。数据与脚本都保留着：那份 rb.CONT 是**离线验收的
+# 样本数据**（三个月、跨一次换月），scripts/acceptance.py 直接读 Parquet，不经过注册表。
 # 换月后重跑这个脚本即可 —— 主力合约会跟着变。
 symbols:
 - uid: CN.CZCE.AP610
@@ -577,16 +582,6 @@ symbols:
   price_tick: 5
   multiplier: 5
   product: zn
-- uid: CN.SHFE.rb.CONT
-  market: CN
-  exchange: SHFE
-  code: rb
-  product: rb
-  calendar: cn_night_23
-  main_code: rb9999
-  price_tick: 1.0
-  multiplier: 10.0
-  is_continuous: true
 - uid: CRYPTO.OKX.BTCUSDT.PERP
   market: CRYPTO
   exchange: OKX

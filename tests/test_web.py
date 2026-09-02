@@ -445,22 +445,36 @@ def test_trade_state_round_trips(tmp_path: pathlib.Path) -> None:
 
 
 def test_meta_lists_continuous_symbols_flagged(tmp_path: pathlib.Path) -> None:
-    """主连是给回测和看图用的。把它挡在下拉框外面，等于自己拼出来的连续序列
-    在面板上根本选不到 —— 排除主连是「预警/下单」路径的事（tradable() 仍排除）。"""
-    from sigdesk.core.registry import load_registry
+    """主连若登记了，就得出现在下拉框里**并被标出来** —— 它可回测可看图但不可下单。
+    把它挡在下拉框外面，等于自己拼出来的连续序列在面板上根本选不到；
+    不标出来，又会和可交易合约混淆。排除主连是「预警/下单」路径的事（tradable()）。
 
-    reg = load_registry(pathlib.Path("config"))
+    **自带夹具，不依赖出厂配置里恰好有主连** —— 出厂 symbols.yaml 现在已经把
+    rb.CONT 摘掉了（不随盘更新，登记只会让下拉框多一个停更的选项），
+    点名依赖它会让这条测试在那次改动里误伤。
+    """
+    from sigdesk.core.calendar import MarketCalendar
+    from sigdesk.core.models import Market, Symbol
+    from sigdesk.core.registry import Registry
+
+    cal = MarketCalendar.from_config("t", ["09:00-15:00"], [])
+    reg = Registry(
+        symbols={
+            "CN.SHFE.rb.CONT": Symbol("CN.SHFE.rb.CONT", Market.CN_FUTURES, "SHFE", "rb",
+                                      "t", is_continuous=True),
+            "CN.SHFE.rb2610": Symbol("CN.SHFE.rb2610", Market.CN_FUTURES, "SHFE", "rb2610", "t"),
+        },
+        calendars={"t": cal},
+    )
     state = ServiceState(
         runtime=RuntimeStore(tmp_path / "r.sqlite3"), data_root=tmp_path, registry=reg
     )
     body = TestClient(create_app(state)).get("/api/meta").json()
     by_uid = {s["uid"]: s for s in body["symbols"]}
-    cont = [s for s in reg.symbols.values() if s.is_continuous]
-    assert cont, "夹具前提：config 里应有主连标的"
-    for sym in cont:
-        assert sym.uid in by_uid, f"{sym.uid} 没出现在面板下拉框里"
-        assert by_uid[sym.uid]["is_continuous"] is True, "前端要靠这个标出主连"
-    assert all(not s.is_continuous for s in reg.tradable()), "tradable() 仍须排除主连"
+    assert "CN.SHFE.rb.CONT" in by_uid, "主连没出现在面板下拉框里"
+    assert by_uid["CN.SHFE.rb.CONT"]["is_continuous"] is True, "前端要靠这个标出主连"
+    assert by_uid["CN.SHFE.rb2610"]["is_continuous"] is False
+    assert [s.uid for s in reg.tradable()] == ["CN.SHFE.rb2610"], "tradable() 须排除主连"
 
 
 def test_meta_offers_the_daily_timeframe(tmp_path: pathlib.Path) -> None:
@@ -542,27 +556,39 @@ def test_intraday_endpoint_reports_the_day_it_drew(
 
 
 def test_meta_flags_symbols_no_rule_is_watching(tmp_path: pathlib.Path) -> None:
-    """下拉框列全部标的（为了能看主连），但 watch.py 只采集**规则 universe 里**的标的。
+    """下拉框列全部注册标的，但 watch.py 只采集**规则 universe 里**的。
     列表里有、却没人盯的，选中就是一张空图 —— 不标出来，用户只会以为"期货连不上"。
-    （真发生过：IF2609/m2701/cu2610 从没被任何规则覆盖，所以一根 bar 都没有。）
-    """
-    from sigdesk.core.registry import load_registry
-    from sigdesk.rules.loader import load_rules
+    （真发生过。）
 
-    reg = load_registry(pathlib.Path("config"))
-    rules = load_rules(pathlib.Path("config/rules"),
-                       load_registry(pathlib.Path("config")))
+    **自带夹具**：出厂规则现在用 `CN.*` 覆盖全部注册标的，一个没被盯的都没有，
+    靠出厂配置就测不到这条路径了。
+    """
+    from sigdesk.core.calendar import MarketCalendar
+    from sigdesk.core.models import Market, Symbol
+    from sigdesk.core.registry import Registry
+    from sigdesk.rules.loader import load_rule
+
+    cal = MarketCalendar.from_config("t", ["09:00-15:00"], [])
+    reg = Registry(
+        symbols={
+            u: Symbol(u, Market.CN_FUTURES, "SHFE", u.split(".")[-1], "t")
+            for u in ("CN.SHFE.watched", "CN.SHFE.lonely")
+        },
+        calendars={"t": cal},
+    )
+    rule = load_rule({
+        "id": "r", "universe": ["CN.SHFE.watched"], "timeframe": "1m",
+        "conditions": [{"on": "1m", "mode": "state", "when": "close > 0"}],
+        "emit": {"direction": "long"},
+    })
     state = ServiceState(
         runtime=RuntimeStore(tmp_path / "r.sqlite3"), data_root=tmp_path,
-        registry=reg, rules=rules,
+        registry=reg, rules=[rule],
     )
     body = TestClient(create_app(state)).get("/api/meta").json()
     by_uid = {s["uid"]: s for s in body["symbols"]}
-    covered = {uid for r in rules for uid in r.universe}
-    assert covered, "夹具前提：规则里得有 universe"
-    for uid, s in by_uid.items():
-        assert s["watched"] is (uid in covered), uid
-    assert any(not s["watched"] for s in by_uid.values()), "夹具前提：应有没被盯的标的"
+    assert by_uid["CN.SHFE.watched"]["watched"] is True
+    assert by_uid["CN.SHFE.lonely"]["watched"] is False, "没人盯的必须标出来"
 
 
 def test_moving_averages_reuse_the_engine_indicators() -> None:

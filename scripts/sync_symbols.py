@@ -156,8 +156,10 @@ async def run(only_options: bool, dry_run: bool) -> int:
 def write(entries: list[dict[str, Any]]) -> int:
     """重写 symbols.yaml 的**国内期货部分**，其余原样保留。
 
-    加密标的不来自这个接口，主连是本地拼出来的 —— 两者都必须保住，
-    所以不是整个文件重生成。
+    加密标的不来自这个接口，所以不是整个文件重生成。
+    主连不再登记（它不可下单、不随盘更新，登记只会让下拉框里多一个点进去是
+    停更图的选项）—— 但如果 symbols.yaml 里手工加回了带 is_continuous 的条目，
+    这里照样保住它，不越权删用户手写的东西。
     """
     path = ROOT / "config" / "symbols.yaml"
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -165,8 +167,9 @@ def write(entries: list[dict[str, Any]]) -> int:
             if str(s.get("market")) != "CN" or s.get("is_continuous")]
     raw["symbols"] = entries + kept
     path.write_text(
-        "# 由 scripts/sync_symbols.py 生成国内期货部分；加密与主连条目手工维护。\n"
+        "# 由 scripts/sync_symbols.py 生成国内期货部分；加密条目手工维护。\n"
         "# 换月后重跑这个脚本即可 —— 主力合约会跟着变。\n"
+        "# 主连不登记：它不可下单也不随盘更新，登记只会让下拉框里多一个停更的选项。\n"
         + yaml.safe_dump(raw, allow_unicode=True, sort_keys=False, width=100),
         encoding="utf-8",
     )

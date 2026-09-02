@@ -75,6 +75,9 @@ def group_quality() -> None:
 
 
 def group_data() -> None:
+    # rb.CONT **不再登记在 symbols.yaml 里**（主连不可下单、不随盘更新）。
+    # 它在这里的角色只剩一个：离线验收的样本数据（三个月、跨一次换月）。
+    # 这一组直接读 Parquet，不经过注册表，所以摘掉注册项不影响它。
     print("\n[2/5] 数据与日历（离线，用包内样本数据）")
     sys.path.insert(0, str(ROOT / "src"))
     import datetime as dt
@@ -219,8 +222,13 @@ def group_api(tmp: pathlib.Path) -> None:
         assert isinstance(meta, dict)
         check("API", "/api/meta", code == 200 and bool(meta["symbols"]))
         check("API", "周期含日线 1d", "1d" in meta["timeframes"])
-        check("API", "下拉框含主连并标注",
-              any(s["uid"].endswith(".CONT") and s["is_continuous"] for s in meta["symbols"]))
+        # 主连**不再登记**（不可下单、不随盘更新，登记只会让下拉框多一个停更的选项）。
+        # 但字段要在 —— 万一有人手工加回一条，前端得能标出来。
+        # 「meta 会标 is_continuous」这条行为由单测覆盖（自带夹具，不依赖出厂配置）。
+        check("API", "注册表里没有主连",
+              not any(s["is_continuous"] for s in meta["symbols"]))
+        check("API", "每个标的都带 is_continuous / watched / last_day 三个字段",
+              all({"is_continuous", "watched", "last_day"} <= set(s) for s in meta["symbols"]))
 
         for path in ("/api/health", "/api/signals", "/api/stats", "/api/trade"):
             check("API", path, _get(base + path)[0] == 200)
