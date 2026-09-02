@@ -6,6 +6,7 @@
 - 需求：[docs/PRD.md](docs/PRD.md) ｜ 架构：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - 路线：[docs/ROADMAP.md](docs/ROADMAP.md) ｜ 日志：[docs/DEVLOG.md](docs/DEVLOG.md)
 - 决策：[docs/adr/](docs/adr/) ｜ **开发须知与已知坑：[CLAUDE.md](CLAUDE.md)**
+- 在 Windows 上跑：[docs/RUN-WINDOWS.md](docs/RUN-WINDOWS.md)
 
 ## 快速开始
 
