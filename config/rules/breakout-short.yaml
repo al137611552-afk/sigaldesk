@@ -10,7 +10,7 @@
 # 真要判"趋势第几根"需要新函数（现在没有）。这个数是主要调参入口：
 #   调小 = 只在贴近均线时才认，信号少；调大 = 放宽到已经拉开一段，信号多。
 id: breakout-short
-enabled: false          # 先试算，看过数据再决定要不要上
+enabled: true
 description: 突破·空头：1h 空头趋势中段，15m 横盘后 5m 放量下破前 20 根区间
 
 universe:

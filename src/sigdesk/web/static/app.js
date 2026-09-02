@@ -259,7 +259,10 @@ function renderOhlc(b) {
   if (box) {
     const fmt = (l) => `<span style="color:${l.color}">${esc(l.label)} ${num(l.value)}</span>`;
     const ok = (l) => l.value !== null && l.value !== undefined;
-    box.innerHTML = (S.legend || []).filter(ok).map(fmt).join("")
+    // 跨周期均线的图例加粗显示，与图上的线宽呼应
+    const refFmt = (l) => `<b style="color:${l.color}">${esc(l.label)} ${num(l.value)}</b>`;
+    box.innerHTML = (S.refLegend || []).filter(ok).map(refFmt).join("")
+      + (S.legend || []).filter(ok).map(fmt).join("")
       + ((S.vmaLegend || []).filter(ok).length
         ? `<span class="lbl">量</span>` + (S.vmaLegend || []).filter(ok).map(fmt).join("")
         : "");
@@ -276,7 +279,7 @@ async function loadChart(centerTs) {
   const tf = S.timeframe;
   const data = await api(
     `/api/bars?symbol=${encodeURIComponent(S.symbol)}&timeframe=${tf}&limit=1500`
-    + `&ma=${MA_MAIN}&vma=${VMA_MAIN}`);
+    + `&ma=${MA_MAIN}&vma=${VMA_MAIN}&ref_ma=${encodeURIComponent(REF_MA_MAIN)}`);
   S.bars = data.bars;
   $("#chart-sym").textContent = `${shortSym(S.symbol)} · ${tf}`;
   if (!data.bars.length) {
@@ -360,6 +363,7 @@ function drawOverlays(chart, priceSeries, data, opts) {
       .filter((pt) => pt.value !== null && pt.value !== undefined));
   });
   for (let i = lines.length; i < store.length; i += 1) store[i].setData([]);
+  drawRefMa(chart, data, opts, uid);
 
   if (opts.volume) {
     opts.volume.setData(data.bars.map((b) => ({
@@ -372,6 +376,34 @@ function drawOverlays(chart, priceSeries, data, opts) {
   return lines.map((m, i) => ({ label: m.label,
                                 color: MA_COLORS[i % MA_COLORS.length],
                                 value: m.values.at(-1) }));
+}
+
+/* 跨周期均线。与本级别均线共用"复用 series、跳过预热 None"的两条纪律：
+   - **不能每次载入都 addLineSeries**，否则切几次周期就堆出几十条隐形序列
+   - **预热期的 None 要跳过，不能补 0**，补 0 会在左端画出一条从零飙起来的假线
+   服务端已经做了 as-of 对齐（1h 均线只在那根 1h 收盘后才生效），前端只管画。 */
+function drawRefMa(chart, data, opts, uid) {
+  const host = opts.host;
+  const lines = data.ref_ma || [];
+  host.refSeries = host.refSeries || [];
+  const store = host.refSeries;
+  while (store.length < lines.length) {
+    store.push(chart.addLineSeries({
+      color: REF_COLORS[store.length % REF_COLORS.length],
+      lineWidth: REF_WIDTH,        // 比本级别均线粗，一眼分得开
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+    }));
+  }
+  lines.forEach((m, i) => {
+    store[i].applyOptions({ color: REF_COLORS[i % REF_COLORS.length] });
+    store[i].setData(data.bars
+      .map((b, k) => ({ time: chartTime(b.close_ts, uid), value: m.values[k] }))
+      .filter((pt) => pt.value !== null && pt.value !== undefined));
+  });
+  for (let i = lines.length; i < store.length; i += 1) store[i].setData([]);
+  host.refLegend = lines.map((m, i) => ({ label: m.label,
+                                          color: REF_COLORS[i % REF_COLORS.length],
+                                          value: m.values.at(-1) }));
 }
 
 /* 量能均线画在**成交量那条价格轴**上（priceScaleId 与量柱相同），
@@ -1106,6 +1138,14 @@ const VMA_MAIN = "5,20";
 const VMA_CELL = "20";
 const VMA_COLORS = ["#e6c07b", "#8b949e"];
 const MA_COLORS = ["#e6c07b", "#61afef", "#c678dd", "#98c379", "#e06c75", "#56b6c2"];
+/* 跨周期均线：在 5m 图上叠 1h / 1d 的均线，一眼看到大级别的方向和位置，
+   不用切周期（"看大做小"最常做的动作）。
+   **画得比本级别均线粗、颜色更实**：它们代表的是更大的力量，视觉权重要相称；
+   细了就淹在本级别那几条里，等于没画。 */
+const REF_MA_MAIN = "1h:ema20,1d:sma20";
+const REF_MA_CELL = "1h:ema20";
+const REF_COLORS = ["#ff9d5c", "#7c9cff"];
+const REF_WIDTH = 3;
 /* 成交量画在同一窗格底部（v4 没有真正的多窗格）：
    独立 priceScaleId + scaleMargins 把它压到下面 25%，不挤占 K 线。 */
 const VOLUME_SCALE = "vol";
@@ -1361,7 +1401,8 @@ async function loadCell(cell) {
   // 靠"临时改全局再改回来"传参会串味：每个格子捕获到的"原值"是别人的值，
   // 最后一个还原的落地什么就剩什么 —— 表现是切换标的后左上角一直显示某个格子的标的。
   const uid = cell.symbol || S.symbol;
-  const q = `symbol=${encodeURIComponent(uid)}&timeframe=${cell.tf}&ma=${MA_CELL}&vma=${VMA_CELL}`;
+  const q = `symbol=${encodeURIComponent(uid)}&timeframe=${cell.tf}&ma=${MA_CELL}`
+    + `&vma=${VMA_CELL}&ref_ma=${encodeURIComponent(REF_MA_CELL)}`;
   const [data, marks] = await Promise.all([
     api(`/api/bars?${q}&limit=${GRID_BARS}`),
     api(`/api/markers?${q}`).catch(() => ({ markers: [], fills: [] })),

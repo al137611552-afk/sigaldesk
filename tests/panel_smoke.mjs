@@ -113,7 +113,13 @@ const FIX = {
          { kind: "sma", window: 20, source: "close", label: "SMA20",
            values: [null, null, null, null, null] }],
     vma: [{ kind: "sma", window: 20, source: "volume", label: "VSMA20",
-            values: [null, 3.5, 4, 4.5, 5] }] },
+            values: [null, 3.5, 4, 4.5, 5] }],
+    // 跨周期均线：服务端已做 as-of 对齐，所以同一个 1h 值会在多根 5m 上重复出现，
+    // 到下一根 1h 收盘才变。桩里要体现这个"台阶"形状，否则对齐这条就没测到。
+    ref_ma: [{ timeframe: "1h", kind: "ema", window: 20, label: "1h EMA20",
+               values: [null, 1.7, 1.7, 1.7, 2.1] },
+             { timeframe: "1d", kind: "sma", window: 20, label: "1d SMA20",
+               values: [null, null, 1.6, 1.6, 1.6] }] },
   "/api/intraday": { symbol: "X", trading_day: "2026-08-31", multiplier: 1,
     points: [{ ts: 1788139800, price: 77000.5, avg: 76980.2 },
              { ts: 1788139860, price: 77010.0, avg: 76990.0 },
@@ -314,7 +320,7 @@ const sandbox = {
       return {
         setData(d) {
           (sandbox.__lines ||= []).push({ scale: (o || {}).priceScaleId || "right",
-                                          n: d.length });
+                                          n: d.length, width: (o || {}).lineWidth || 1 });
         },
         applyOptions() {}, setMarkers() {},
         createPriceLine: (o) => o, removePriceLine() {} };
@@ -559,6 +565,8 @@ setTimeout(async () => {
     ops_rules_html: get("#ops-rules").innerHTML,
     markers: (sandbox.__markers || []).length,
     ma_lines: (sandbox.__lines || []).filter((x) => x.scale !== "vol").map((x) => x.n),
+    // 线宽：跨周期均线要明显比本级别的粗，否则淹在里面等于没画
+    line_widths: [...new Set((sandbox.__lines || []).map((x) => x.width))].sort(),
     vma_lines: (sandbox.__lines || []).filter((x) => x.scale === "vol").map((x) => x.n),
     volume_points: (sandbox.__vol || []).length,
     volume_colors: [...new Set((sandbox.__vol || []).map((v) => v.color))].length,

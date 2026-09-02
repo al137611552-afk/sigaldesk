@@ -15,7 +15,7 @@
 # 但**先确认那个周期有足够历史**（scripts/backfill.py 回补），否则永远预热不完、一条不报。
 id: kdzx-short
 enabled: true
-description: 看大做小·空头：1h 空头趋势中反抽均线，5m 出卖点并走出箱体
+description: 看大做小·空头：1h 空头趋势中反抽均线，5m 放量下破前 20 根区间
 
 universe:
   - CN.SHFE.rb2610
@@ -29,7 +29,6 @@ universe:
 timeframes:
   trend: 1h
   zone: 1h
-  setup: 5m
   box: 5m
 
 conditions:
@@ -43,15 +42,18 @@ conditions:
     mode: state
     when: abs(close - ema(close, 20)) < atr(14) * 0.8
 
-  # ③ 小级别卖点：分钟双顶，或 MACD 死叉
-  - on: setup
-    mode: event
-    when: double_top(5, 0.003) or cross_down(macd_dif(), macd_dea())
-
-  # ④ 卖点之后要走出一个箱体才报，避免追在急跌的半山腰
+  # ③ 扳机：放量下破前 20 根 5m 的区间。
+  #
+  # **这一段是重做过的。** 原来是「双顶/死叉」+「箱体确认」两段，实测超额只有
+  # +0.004%（≈ 等于随机做空）。换成放量突破后到 **+0.049%**（120 条），
+  # 与 breakout-short 同档。原因大概是：等双顶走完再等 12 根箱体，
+  # 反抽那一波已经结束了，进场太晚。突破是"反抽结束"的即时证据。
+  #
+  # range() **不含当前根** —— 含了的话当前根永远落在区间内，breakout 恒为假。
+  # 量能门槛与 breakout-short 一致（内置 volume-spike 用 2.5，这里放松到 1.5）。
   - on: box
-    mode: state
-    when: consolidation(12, 0.005)
+    mode: event
+    when: breakout(range(20), dir='down') and volume > sma(volume, 20) * 1.5
 
 context:
   atr14: atr(14)

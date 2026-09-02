@@ -39,7 +39,7 @@ from ..store.runtime_store import RuntimeStore
 from .health import HealthMonitor
 from .intraday import build_intraday
 from .markers import collapse, pair_trades
-from .overlay import moving_averages
+from .overlay import moving_averages, ref_moving_averages
 from .watchlist import SLOTS, build_group, latest_by_symbol
 
 STATIC_DIR = pathlib.Path(__file__).parent / "static"
@@ -276,6 +276,7 @@ def create_app(state: ServiceState) -> FastAPI:
         limit: int = Query(1000, ge=1, le=MAX_BARS),
         ma: str = "",
         vma: str = "",
+        ref_ma: str = "",
     ) -> dict[str, Any]:
         try:
             tf = Timeframe(timeframe)
@@ -289,6 +290,16 @@ def create_app(state: ServiceState) -> FastAPI:
         vlines = moving_averages(series, vma, source="volume") if vma else []
         cut = len(series) - len(shown)
         clip = [{**m.as_dict(), "values": m.values[cut:]} for m in (*lines, *vlines)]
+
+        # 跨周期均线（在 5m 图上叠 1h / 1d 均线）。**直接在截取后的 shown 上对齐** ——
+        # 对齐是 as-of 查表，不像 MA 那样需要前置窗口预热，所以不必在全序列上算。
+        def load_ref(tf_value: str) -> list[Bar]:
+            try:
+                return read_range(state.data_root, symbol, Timeframe(tf_value), 0, end_ts)
+            except ValueError:
+                return []
+
+        refs = ref_moving_averages(shown, ref_ma, load_ref) if ref_ma else []
         return {
             "symbol": symbol,
             "timeframe": tf.value,
@@ -296,6 +307,7 @@ def create_app(state: ServiceState) -> FastAPI:
             "bars": [_bar_dict(b) for b in shown],
             "ma": [m for m in clip if m["source"] == "close"],
             "vma": [m for m in clip if m["source"] == "volume"],
+            "ref_ma": [m.as_dict() for m in refs],
         }
 
     @app.get("/api/intraday")

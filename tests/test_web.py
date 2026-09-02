@@ -696,3 +696,67 @@ def test_pinning_is_refused_when_not_bound_to_loopback(
 def _crypto(client: TestClient) -> list[dict[str, Any]]:
     d = client.get("/api/watchlist").json()
     return next(m for m in d["markets"] if m["key"] == "CRYPTO")["entries"]
+
+
+# ---------------------------------------------------------------- 跨周期均线
+
+
+def _bar(ts: int, close: float, tf: Timeframe) -> Bar:
+    return Bar(symbol="X", timeframe=tf, open_ts=ts - 60, close_ts=ts,
+               open=close, high=close, low=close, close=close, volume=1, closed=True)
+
+
+def test_ref_ma_alignment_never_looks_ahead() -> None:
+    """**一根 1h 均线的值，只有在那根 1h 收盘之后才算已知。**
+
+    把 1h 的值摊到它自己那一小时的每根 5m 上，等于让 09:00 的 5m bar 看到
+    09:59 才收盘的那根 1h —— 复盘时会得出"当时明明看得出来"的错误结论，
+    而实盘那一刻你根本看不到。这与 INV-1（as-of 视图物理截断未来）是同一条纪律。
+    """
+    from sigdesk.web.overlay import align_as_of
+
+    ref = [_bar(3600, 10.0, Timeframe.H1), _bar(7200, 20.0, Timeframe.H1)]
+    vals: list[float | None] = [10.0, 20.0]
+    bars = [_bar(t, 0.0, Timeframe.M5) for t in (1800, 3600, 5400, 7200, 9000)]
+    got = align_as_of(bars, ref, vals)
+    assert got == [None, 10.0, 10.0, 20.0, 20.0], got
+    # 逐条说明：
+    #   1800  第一根 1h 还没收盘 -> None（**不能借用未来的 10.0**）
+    #   3600  正好是它的收盘时刻 -> 10.0（收盘即可见）
+    #   5400  下一根还没收 -> 仍是 10.0（台阶保持）
+    #   7200  第二根收盘 -> 20.0
+
+
+def test_ref_ma_holds_flat_between_reference_closes() -> None:
+    """两次高周期收盘之间，值应当是**平的台阶**，不是插值。
+    插值等于在还没发生的时候就给出中间态，同样是泄露未来。"""
+    from sigdesk.web.overlay import align_as_of
+
+    ref = [_bar(3600, 10.0, Timeframe.H1), _bar(7200, 20.0, Timeframe.H1)]
+    bars = [_bar(t, 0.0, Timeframe.M5) for t in range(3600, 7200, 300)]
+    got = align_as_of(bars, ref, [10.0, 20.0])
+    assert set(got) == {10.0}, got
+
+
+def test_ref_ma_endpoint_returns_aligned_series(
+    wired: tuple[TestClient, ServiceState],
+) -> None:
+    """端点把跨周期均线对齐到当前图的 bar 上，长度与 bars 一致。"""
+    client, _ = wired
+    d = client.get(f"/api/bars?symbol={BTC}&timeframe=1m&limit=50"
+                   f"&ma=5&ref_ma=5m:ema3").json()
+    assert d["ref_ma"], "没有返回跨周期均线"
+    ref = d["ref_ma"][0]
+    assert ref["label"] == "5m EMA3"
+    assert len(ref["values"]) == len(d["bars"]), "没有对齐到当前图的 bar"
+
+
+def test_ref_ma_bad_spec_is_skipped_not_fatal(
+    wired: tuple[TestClient, ServiceState],
+) -> None:
+    """写错一项就跳过那一项，**不该让整个取数请求失败** —— 图上少一条线
+    远好过整张图打不开（与 ma= 的处理同理）。"""
+    client, _ = wired
+    d = client.get(f"/api/bars?symbol={BTC}&timeframe=1m&limit=20"
+                   f"&ref_ma=nope,5m:ema3,1h").json()
+    assert [m["label"] for m in d["ref_ma"]] == ["5m EMA3"]

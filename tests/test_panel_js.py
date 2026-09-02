@@ -915,3 +915,26 @@ def test_grid_cells_allow_wheel_zoom() -> None:
     zoom = js[js.index("function zoomCell("):]
     zoom = zoom[: zoom.index("\n}\n")]
     assert "handleScroll" not in zoom, "交互开关已经不归 zoomCell 管了"
+
+
+def test_reference_mas_are_drawn_thicker(smoke: dict[str, object]) -> None:
+    """跨周期均线（5m 图上叠 1h / 1d）要画得**明显比本级别均线粗**。
+
+    它们代表的是更大的力量，视觉权重要相称；线细了就淹在本级别那几条里，
+    等于没画（用户原话："粗一点方便我做判断"）。
+    """
+    widths = smoke["line_widths"]
+    assert isinstance(widths, list)
+    assert 1 in widths, "本级别均线仍是细线"
+    assert max(widths) >= 3, f"跨周期均线没有加粗: {widths}"
+
+
+def test_reference_mas_skip_warmup_like_normal_mas(smoke: dict[str, object]) -> None:
+    """预热期的 None 同样要跳过，不能补 0 —— 补 0 会在图左端画出一条
+    从零飙起来的假线（与本级别均线同一条纪律，ADR-0006）。
+
+    夹具：1h EMA20 是 [null,…] 共 5 个值 -> 画 4 个点；1d SMA20 前两个 null -> 3 个点。
+    """
+    lines = smoke["ma_lines"]
+    assert isinstance(lines, list)
+    assert lines[:4] == [4, 0, 4, 3], lines
