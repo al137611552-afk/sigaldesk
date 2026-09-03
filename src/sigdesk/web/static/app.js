@@ -2018,17 +2018,25 @@ function onGridKey(ev) {
     case "j": case "J": stepSignal(1); break;
     case "k": case "K": stepSignal(-1); break;
     case "g": case "G": toggleGrid(); break;
-    case "t": case "T":
-      if (G.on) { G.mode = G.mode === "watch" ? "tf" : "watch"; renderGrid(); }
+    case "t": case "T": {
+      // **点按钮，别另写一套切换逻辑。** 上一版这里自己翻 G.mode 再 renderGrid()，
+      // 绕过了按钮 onclick 里的 clearZoom() —— 放大态下按 T 就灰屏
+      // （`.grid.zoomed` 还在、新格子没有 `.big`，九格全被 display:none）。
+      // 数字键那边早就用了"走按钮自己的 onclick"，这里没照做，于是分了家。
+      if (!G.on) break;
+      const other = $$("#grid-mode [data-mode]").find((b) => b.dataset.mode !== G.mode);
+      if (other) other.onclick();
       break;
-    case "[": case "]":
-      if (G.on && G.mode === "watch" && G.wl) {
-        const ks = G.wl.markets.map((m) => m.key);
-        const i = ks.indexOf(G.market);
-        G.market = ks[(i + (ev.key === "]" ? 1 : -1) + ks.length) % ks.length];
-        loadWatch();
-      }
+    }
+    case "[": case "]": {
+      // 同上：点 tab 自己的 onclick，不重写一遍切换逻辑
+      if (!(G.on && G.mode === "watch")) break;
+      const tabs = $$("#wl-tabs .wl-tab");
+      const at = tabs.findIndex((b) => b.dataset.k === G.market);
+      const to = tabs[(at + (ev.key === "]" ? 1 : -1) + tabs.length) % tabs.length];
+      if (to && to !== tabs[at]) to.onclick();
       break;
+    }
     default: break;
   }
 }

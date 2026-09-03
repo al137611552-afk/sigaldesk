@@ -40,6 +40,11 @@
   误读成「规则在长持有期上更好」。
 
 ### Fixed
+- **放大态下按 `T` 换网格模式仍会灰屏**（上一版只修了点按钮那条路径）。
+  根因是 `T` 与 `[`/`]` **另写了一套切换逻辑**，绕过按钮 onclick 里的 `clearZoom()`：
+  `G.zoomed` 没清、`.grid.zoomed` 还在而新格子没有 `.big`，九格全被 `display:none`
+  （也正因 `G.zoomed` 还在，按 Esc 反而能救回来）。改为一律 `按钮.onclick()` ——
+  数字键早就这么做了，这两个没照做才分的家。
 - **`evaluate_all` 是 O(信号数 × bar 数)**：它对每条信号都重扫整条序列，
   而 `evaluate` 只用得到 `future[:horizon_bars]`。接上基准计算后
   `/api/stats` 一度要 6.3 秒。改成按 close_ts 二分定位再切一小段：

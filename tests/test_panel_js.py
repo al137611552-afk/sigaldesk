@@ -1221,3 +1221,33 @@ def test_zoom_state_is_cleared_in_one_place() -> None:
         if "G.zoomed = null" in ln and "clearZoom" not in ln
     ]
     assert len(others) == 1, f"清放大态一律走 clearZoom()，这些没走：{others}"
+
+
+def test_keyboard_shortcuts_click_the_real_buttons() -> None:
+    """**快捷键要点按钮，不能另写一套动作逻辑。**
+
+    上一版 `T` 自己翻 `G.mode` 再 `renderGrid()`，绕过了按钮 onclick 里的
+    `clearZoom()` —— 放大态下按 T 就灰屏（`.grid.zoomed` 还在、新格子没有 `.big`，
+    九格全被 `display:none`；因为 `G.zoomed` 没清，Esc 反而能救回来）。
+
+    数字键早就用了"走按钮自己的 onclick"，`T` 和 `[`/`]` 没照做，于是分了家 ——
+    **同一个动作有两份实现，修一份就一定漏另一份。**
+    """
+    js = APP.read_text(encoding="utf-8")
+    body = js[js.index("function onGridKey(ev)"):]
+    body = body[: body.index("\n}\n")]
+
+    for key, why in (('case "t": case "T"', "换网格模式"), ('case "[": case "]"', "切市场")):
+        seg = body[body.index(key):]
+        # **切到下一个 case**，不能切到第一个 `break;` —— 提前退出的
+        # `if (!G.on) break;` 就在开头，切那里等于什么都没检查（第一版就这么错的）
+        nxt = min((seg.index(m) for m in ('\n    case "', "\n    default:") if m in seg[2:]),
+                  default=len(seg))
+        seg = seg[:nxt]
+        assert ".onclick()" in seg, f"{why} 要走按钮自己的 onclick"
+        # **只查真正的赋值**：`G.mode === "watch"` 里的 `===` 会被 `G.mode =` 命中
+        # （这类"断言写太粗"的错这一轮犯了四次，一律用正则钉死边界）
+        for name in ("G.mode", "G.market"):
+            assert not re.search(re.escape(name) + r"\s*=(?!=)", seg), (
+                f"{why} 不许自己改 {name} —— 那是按钮的事"
+            )
