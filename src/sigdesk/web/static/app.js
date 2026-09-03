@@ -371,6 +371,38 @@ const chartTime = (ts, uid) => ts + (isCrypto(uid) ? 0 : 8 * 3600);
 /* 左上角那行标题。**三种视图各写各的会漏**：网格模式走 loadGrid / loadWatch，
    根本不经过 loadChart，于是切换标的后标题一直停在上一个（用户报的 bug）。
    收成一个函数，凡是换了"现在在看什么"的地方都调它。 */
+/* 定时刷行情。
+
+   **原来只有信号到达时才刷**（SSE 只推 hello / signal 两种事件），
+   于是盘中价格和成交量纹丝不动 —— 一个盯盘面板不该是这样（用户报的）。
+
+   两条纪律：
+   - **必须保住当前的可视区间**。`loadChart`/`loadCell` 收尾都会 fitContent，
+     直接复用会让用户每隔半分钟被拽回默认视野，比不刷还难受。
+   - **页面不可见时不刷**。切到别的标签页还每半分钟打十几个请求纯属浪费。 */
+const REFRESH_MS = 30000;
+
+function keepView(chart, fn) {
+  const range = chart.timeScale().getVisibleLogicalRange();
+  return Promise.resolve(fn()).then(() => {
+    if (range) chart.timeScale().setVisibleLogicalRange(range);
+  });
+}
+
+async function refreshMarket() {
+  if (document.hidden) return;
+  if ($("#view-live") && !$("#view-live").classList.contains("active")) return;
+  try {
+    if (G.on) {
+      await Promise.all(activeCells().map((c) => keepView(c.chart, () => loadCell(c))));
+    } else if (S.symbol && S.chart) {
+      await keepView(S.chart, () => loadChart(S.selected ? S.selected.fired_at : null));
+    }
+  } catch {
+    // 刷新失败不该打断盯盘 —— 下一轮再试。真正的连通性问题「运行健康」页会说。
+  }
+}
+
 function setChartTitle() {
   const el = $("#chart-sym");
   if (!el) return;
@@ -378,6 +410,9 @@ function setChartTitle() {
   if (G.mode === "watch") {
     const m = (G.wl?.markets || []).find((x) => x.key === G.market);
     el.textContent = `${m ? m.label : ""}预警组 · ${G.wtf}`;
+    // **顶部读数在这里没有意义**：九格是九个品种，一个 OHLC/成交量说不清是谁的
+    // （用户报的）。每格自己的头部已经有读数，且跟着十字线走。
+    $("#ohlc").innerHTML = "";
   } else {
     el.textContent = `${shortSym(S.symbol)} · 九周期`;
   }
@@ -1663,6 +1698,9 @@ function makeCell(map, key, tf, headHtml) {
   // 悬停即同步：在任意一格移动，其余八格显示**同一时刻**的十字线。
   // 这正是"看大做小"要的 —— 一眼看清同一刻各级别长什么样。
   chart.subscribeCrosshairMove((param) => {
+    // **读数总是更新**，哪怕这一格是被同步过来的 —— 否则同步来的十字线
+    // 只是一条线，旁边的数字还停在"最新"，看着比不同步更糊涂。
+    paintCellHover(cell, param);
     if (G.syncing) return;              // 防回环：下面的 setCrosshairPosition 会再触发本回调
     if (G.pinned !== null) return;      // 已锁定就别被鼠标带跑
     syncCrosshair(param.time ?? null, key);
@@ -1719,6 +1757,45 @@ const PIN_SVG = `<svg width="11" height="11" viewBox="0 0 16 16" fill="none"
  * **跨周期要对齐到"包含该时刻的那根 bar"** —— 1m 上的 10:03 在 1d 上不是一根 bar，
  * 直接把原时刻塞给日线图，十字线要么不显示要么落在错的位置。
  * 取"最后一根 time <= 目标"的 bar，就是包含它的那根。 */
+/* 格子头部：收盘价 + 各条均线在**同一时刻**的值 + 根数。
+   悬停与默认共用这一份拼法 —— 两处各拼一遍迟早长得不一样。 */
+function cellHead(closeTxt, values, legend, tail) {
+  return `${closeTxt}　`
+    + legend.map((l, i) => [l, values[i]])
+        .filter(([, v]) => v !== null && v !== undefined)
+        .map(([l, v]) => `<span style="color:${l.color}">${esc(l.label)} ${num(v)}</span>`)
+        .join("　")
+    + (tail || "");
+}
+
+/* 按 bar 索引刷这一格的读数。同步过来的十字线走这条 —— 它拿不到 seriesData。 */
+function paintCellAt(cell, i) {
+  if (!cell.head || !cell.headDefault || !cell.bars || !cell.bars[i]) return;
+  cell.head.innerHTML = cellHead(
+    num(cell.bars[i].close),
+    (cell.maValues || []).map((vs) => vs[i]),
+    cell.headLegend || [], cell.headTail);
+}
+
+/* 十字线移到哪，头部就读哪一刻。
+
+   **不做这件事的话十字线是误导的**：线画在三小时前，数字却还是最新收盘
+   （单图早就跟着走了，九宫格一直没跟 —— 两边不一致）。
+   移开鼠标（param.time 为空）就恢复默认那份。 */
+function paintCellHover(cell, param) {
+  if (!cell.head || !cell.headDefault) return;
+  const t = param && param.time;
+  if (!t || !param.seriesData) { cell.head.innerHTML = cell.headDefault; return; }
+  const bar = param.seriesData.get(cell.series);
+  if (!bar) { cell.head.innerHTML = cell.headDefault; return; }
+  const close = bar.close ?? bar.value;
+  const vals = (cell.maSeries || []).map((sr) => {
+    const d = param.seriesData.get(sr);
+    return d ? (d.value ?? d.close) : undefined;
+  });
+  cell.head.innerHTML = cellHead(num(close), vals, cell.headLegend || [], cell.headTail);
+}
+
 function syncCrosshair(time, sourceKey) {
   G.syncing = true;
   try {
@@ -1727,15 +1804,24 @@ function syncCrosshair(time, sourceKey) {
     // 按 tf 比对的话预警组九格 tf 相同，会被当成"源格子"全部跳过 —— 两个都错。
     for (const c of activeCells()) {
       if (c.key === sourceKey) continue;   // 源格子由图表自己画，别覆盖
-      if (time === null || !c.points.length) { c.chart.clearCrosshairPosition(); continue; }
+      if (time === null || !c.points.length) {
+        c.chart.clearCrosshairPosition();
+        if (c.head && c.headDefault) c.head.innerHTML = c.headDefault;
+        continue;
+      }
       let lo = 0, hi = c.points.length - 1, found = -1;
       while (lo <= hi) {
         const mid = (lo + hi) >> 1;
         if (c.points[mid].time <= time) { found = mid; lo = mid + 1; } else { hi = mid - 1; }
       }
-      if (found < 0) { c.chart.clearCrosshairPosition(); continue; }
+      if (found < 0) {
+        c.chart.clearCrosshairPosition();
+        if (c.head && c.headDefault) c.head.innerHTML = c.headDefault;
+        continue;
+      }
       const p = c.points[found];
       c.chart.setCrosshairPosition(p.value, p.time, c.series);
+      paintCellAt(c, found);           // 线和数字要一起走，见 paintCellHover 的注释
     }
   } finally {
     G.syncing = false;
@@ -1787,6 +1873,18 @@ function zoomCell(key) {
     G.zoomed = next;
     grid.classList.add("zoomed");
     for (const c of activeCells()) c.root.classList.toggle("big", c.key === next);
+    // **在预警组里放大一格 = "我要看的就是这个标的"**，把它设成当前标的。
+    // 不设的话，切到九周期看到的还是下拉框里那个旧标的 —— 明明刚放大了 ETH，
+    // 切过去却是别的品种（用户报的）。顺带让下拉框和标题跟上。
+    if (G.mode === "watch") {
+      const cell = G.wcells.get(next);
+      if (cell && cell.symbol && cell.symbol !== S.symbol) {
+        S.symbol = cell.symbol;
+        const sel = $("#c-symbol");
+        if (sel) sel.value = cell.symbol;
+        setChartTitle();
+      }
+    }
   }
   // 尺寸变了必须显式重算 —— 图表不会自己跟随容器
   requestAnimationFrame(() => {
@@ -1877,12 +1975,15 @@ async function loadCell(cell) {
   const legend = drawOverlays(cell.chart, cell.series, data,
     { maStore: "maSeries", volume: cell.volume, host: cell, symbol: uid });
   const last = data.bars.at(-1);
-  // 均线值写进格子标题：小格子里挤不下图例，但不写就不知道哪条是哪条
-  cell.head.innerHTML = `${num(last.close)}　`
-    + legend.filter((l) => l.value !== null && l.value !== undefined)
-        .map((l) => `<span style="color:${l.color}">${esc(l.label)} ${num(l.value)}</span>`)
-        .join("　")
-    + `　<span class="lbl">${data.total} 根</span>`;
+  // 均线值写进格子标题：小格子里挤不下图例，但不写就不知道哪条是哪条。
+  // **存一份"默认头部"**：鼠标移开时恢复它，悬停时换成那一刻的值。
+  cell.headLegend = legend;
+  // 逐根的均线值，与 cell.bars 一一对齐 —— **同步过来的十字线取不到 seriesData**
+  // （setCrosshairPosition 触发的回调里它是空的），只能按索引自己查
+  cell.maValues = (data.ma || []).map((m) => m.values);
+  cell.headTail = `　<span class="lbl">${data.total} 根</span>`;
+  cell.headDefault = cellHead(num(last.close), legend.map((l) => l.value), legend, cell.headTail);
+  cell.head.innerHTML = cell.headDefault;
   cell.chart.timeScale().fitContent();
 }
 
@@ -2946,6 +3047,7 @@ async function boot() {
   if (S.meta.live) connectSSE();
   await refreshBadges();
   setInterval(refreshBadges, 15000);
+  setInterval(refreshMarket, REFRESH_MS);
   // **时钟走市场时间（CST），不是 UTC。** 原来显示 `toISOString()` 的 UTC 时间，
   // 比国内用户的墙上钟慢 8 小时，而面板上期货的每个时间戳都是 CST —— 全屏就这一个
   // 表跟别人不一致。用 UTC+8 硬算（与 chartTime/fmtTime 同一口径），不依赖本机时区设置：

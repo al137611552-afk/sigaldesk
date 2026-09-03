@@ -1251,3 +1251,72 @@ def test_keyboard_shortcuts_click_the_real_buttons() -> None:
             assert not re.search(re.escape(name) + r"\s*=(?!=)", seg), (
                 f"{why} 不许自己改 {name} —— 那是按钮的事"
             )
+
+
+def test_cell_readout_follows_the_crosshair() -> None:
+    """**十字线走到哪，格子的数字就读哪一刻。**
+
+    原来线画在三小时前、数字还是最新收盘 —— 十字线在说"我在看这一刻"，
+    数字在说"现在"。单图早就跟着走了（renderOhlc），九宫格一直没跟。
+
+    两条路径都要覆盖：
+    - 自己被鼠标悬停 -> 从 `param.seriesData` 取；
+    - **被同步过来 -> seriesData 是空的**（setCrosshairPosition 触发的回调里没有），
+      只能按 bar 索引自己查，所以 syncCrosshair 里要顺手刷读数。
+    """
+    js = APP.read_text(encoding="utf-8")
+    # **要定位格子那处**，不是单图那处（334 行也有一个 subscribeCrosshairMove）
+    fn = js[js.index("  chart.subscribeCrosshairMove((param) => {"):]
+    fn = fn[: fn.index("});")]
+    assert "paintCellHover" in fn, "悬停要更新自己的读数"
+    assert fn.index("paintCellHover") < fn.index("if (G.syncing) return"), (
+        "读数要在防回环的提前 return **之前**更新，否则被同步的那几格永远不刷"
+    )
+
+    sync = js[js.index("function syncCrosshair("):]
+    sync = sync[: sync.index("\n}\n")]
+    assert "paintCellAt" in sync, "同步过去的格子也要刷读数（拿不到 seriesData）"
+    assert "headDefault" in sync, "清十字线时要恢复默认读数"
+
+
+def test_market_data_refreshes_on_a_timer() -> None:
+    """**原来只有信号到达时才刷行情**（SSE 只推 hello / signal 两种事件），
+    于是盘中价格和成交量纹丝不动 —— 一个盯盘面板不该是这样（用户报的）。
+
+    两条纪律缺一不可：
+    - **保住当前可视区间**：loadChart/loadCell 收尾会 fitContent，
+      直接复用会让用户每隔半分钟被拽回默认视野，比不刷还难受；
+    - **页面不可见时不刷**：切到别的标签页还每半分钟打十几个请求纯属浪费。
+    """
+    js = APP.read_text(encoding="utf-8")
+    assert "setInterval(refreshMarket" in js, "要有定时刷新"
+    fn = js[js.index("async function refreshMarket()"):]
+    fn = fn[: fn.index("\n}\n")]
+    assert "document.hidden" in fn, "页面不可见时要跳过"
+    assert "keepView" in fn, "刷新要保住可视区间"
+
+    keep = js[js.index("function keepView("):]
+    keep = keep[: keep.index("\n}\n")]
+    assert "getVisibleLogicalRange" in keep and "setVisibleLogicalRange" in keep
+
+
+def test_watchlist_hides_the_meaningless_top_readout() -> None:
+    """预警组九格是**九个品种**，顶部一个 OHLC / 成交量说不清是谁的（用户报的）。
+    每格自己的头部已经有读数，且跟着十字线走。"""
+    js = APP.read_text(encoding="utf-8")
+    fn = js[js.index("function setChartTitle()"):]
+    fn = fn[: fn.index("\n}\n")]
+    watch = fn[fn.index('G.mode === "watch"'):]
+    assert '$("#ohlc").innerHTML = ""' in watch, "预警组要清掉顶部读数"
+
+
+def test_zooming_a_watchlist_cell_adopts_its_symbol() -> None:
+    """**在预警组放大一格 = 「我要看的就是这个」。**
+    不把它设成当前标的的话，切到九周期看到的还是下拉框里那个旧标的
+    —— 明明刚放大了 ETH，切过去却是别的品种（用户报的）。"""
+    js = APP.read_text(encoding="utf-8")
+    fn = js[js.index("function zoomCell(key)"):]
+    fn = fn[: fn.index("\n}\n")]
+    assert "G.wcells.get(next)" in fn, "要取被放大那格的标的"
+    assert "S.symbol = cell.symbol" in fn, "要设成当前标的"
+    assert 'sel.value = cell.symbol' in fn, "下拉框也要跟上"
