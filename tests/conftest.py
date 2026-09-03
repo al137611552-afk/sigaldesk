@@ -6,9 +6,32 @@ from typing import Any
 
 import pytest
 
+from sigdesk.core import env as env_module
+
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 
 Raw = dict[str, list[dict[str, Any]]]
+
+
+@pytest.fixture(autouse=True)
+def _isolate_user_env(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**测试绝不能碰开发机上真实的 `~/.signal-desk/.env`。**
+
+    `candidate_paths` 的最后一档是模块级常量 `USER_ENV`，指向真实家目录。
+    不隔离的话有两个后果，第二个更糟：
+
+    1. 断言"没找到 .env"的测试在**配过凭据的机器上必然失败** ——
+       用户的 Windows 机器上就是这么红的，而代码本身没问题。
+    2. **测试会把真实凭据读进 `os.environ`**。跑个测试就把自己的 key
+       灌进进程环境，这是不该发生的事。
+
+    `SIGDESK_ENV` 一并清掉 —— 开发者 shell 里若设了它，测试结果就随机器而变。
+    """
+    fake = tmp_path_factory.mktemp("fake-home") / ".signal-desk" / ".env"
+    monkeypatch.setattr(env_module, "USER_ENV", fake)
+    monkeypatch.delenv("SIGDESK_ENV", raising=False)
 
 
 @pytest.fixture(scope="session")

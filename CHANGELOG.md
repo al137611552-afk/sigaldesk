@@ -39,6 +39,16 @@
   所以这个入口和快捷键本身是同一件事的两半。
 
 ### Fixed
+- **`os.kill(pid, 0)` 在 Windows 上会终止目标进程**（严重）。Python 的 `os.kill`
+  在 Windows 上没有「信号 0 探测」：除 CTRL_C_EVENT/CTRL_BREAK_EVENT 外走的是
+  `TerminateProcess()`。这是**生产路径** —— `watch.py` 启动时 `claim_writer` 会调它，
+  库里若留着陈旧的写者记录、那个 pid 又被系统回收给了别的进程，启动盯盘就会杀掉一个
+  无关进程。改为 Windows 走 `OpenProcess` + `GetExitCodeProcess`（只读不写）。
+  用户在 Windows + Python 3.14 上报「测试挂起」，查下去是这个。
+- **测试会读到开发机上真实的 `~/.signal-desk/.env`**。断言「没找到 .env」的用例
+  在**配过凭据的机器上必然失败**（用户的 Windows 机器就是这么红的，代码本身没问题），
+  更糟的是**跑测试会把真实凭据灌进 `os.environ`**。
+  `conftest.py` 加 autouse 隔离，把 `USER_ENV` 指到临时目录并清掉 `SIGDESK_ENV`。
 - **右上角时钟显示的是 UTC**，比国内墙上钟慢 8 小时。而面板上期货的每个时间戳
   都是 CST —— 全屏就这一个表跟别人不一致。改为走市场时间（CST，UTC+8 硬算，
   与 chartTime/fmtTime 同口径，不依赖本机时区设置），UTC 放进 title。

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import pathlib
 import sqlite3
 import threading
@@ -95,13 +96,63 @@ CREATE TABLE IF NOT EXISTS watchlist_pin (
 """
 
 
+def _alive_windows(pid: int) -> bool:
+    """Windows 上的存活探测。**绝不能用 os.kill。**
+
+    Python 的 `os.kill` 在 Windows 上没有"信号 0 探测"这回事：除
+    `CTRL_C_EVENT`/`CTRL_BREAK_EVENT` 外，它走的是 **`TerminateProcess()`** ——
+    `os.kill(pid, 0)` 会**真的把那个进程杀掉**（退出码 0）。
+    这里是 watch.py 启动时的生产路径：库里若留着一条陈旧的写者记录、
+    而那个 pid 已被系统回收给别的进程，启动盯盘就会杀掉一个无关进程。
+
+    改用 OpenProcess + GetExitCodeProcess，只读不写。
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    STILL_ACTIVE = 259
+    ERROR_ACCESS_DENIED = 5
+
+    # typeshed 把 WinDLL / get_last_error 标成仅 win32 可见，在 Linux 上跑 mypy
+    # 必然报 attr-defined。这段本来就只在 sys.platform == "win32" 时执行。
+    try:
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+        k32.OpenProcess.restype = wintypes.HANDLE
+        k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        k32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        k32.CloseHandle.argtypes = [wintypes.HANDLE]
+        handle = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            # 拒绝访问 = 进程存在但不归我管 -> 当作活着（保守方向，见下）
+            err: int = ctypes.get_last_error()  # type: ignore[attr-defined]
+            return err == ERROR_ACCESS_DENIED
+        try:
+            code = wintypes.DWORD()
+            if not k32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return True
+            # 退出码恰好是 259 的进程会被误判成活着。这是 Win32 的固有二义性，
+            # 且偏在保守那一侧（多问一句），可以接受。
+            return code.value == STILL_ACTIVE
+        finally:
+            k32.CloseHandle(handle)
+    except Exception:
+        return True              # 探测本身出错 -> 保守认为活着
+
+
 def _alive(pid: int) -> bool:
     """那个 pid 还在不在。**探测失败一律当"还活着"** ——
-    误判成"死了"会放行第二个写者，那正是要避免的；误判成"活着"只是多问一句。"""
+    误判成"死了"会放行第二个写者，那正是要避免的；误判成"活着"只是多问一句。
+
+    **两个平台必须走两条路**：`os.kill(pid, 0)` 是 Unix 专用技巧，
+    在 Windows 上会真的终止目标进程（见 `_alive_windows`）。
+    """
     if pid <= 0:
         return False
+    if sys.platform == "win32":
+        return _alive_windows(pid)
     try:
-        os.kill(pid, 0)          # 信号 0 = 只检查存在性与权限，不真的发信号
+        os.kill(pid, 0)          # 仅 POSIX：信号 0 只检查存在性与权限，不真的发信号
     except ProcessLookupError:
         return False
     except (PermissionError, OSError):

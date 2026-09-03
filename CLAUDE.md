@@ -331,6 +331,16 @@ canvas（z-index:1/2）整个盖住就是这样 —— 元素在、文字在、v
 - 全部时间取 `bar.close_ts`，**频率限制也不例外** —— 用墙钟会让回放与实盘拒不同的单。
 - 纸上撮合**没有盘口、不看深度、bar 内路径不可见**，别拿它当实盘预期。
 
+## 跨平台（Windows 是一等目标）
+- **`os.kill(pid, 0)` 只在 POSIX 上是"探测"。** Windows 的 `os.kill` 除
+  CTRL_C_EVENT/CTRL_BREAK_EVENT 外走 `TerminateProcess()` —— **它会真的把进程杀掉**。
+  存活探测在 Windows 上必须走 `OpenProcess` + `GetExitCodeProcess`
+  （见 `runtime_store._alive_windows`）。写任何"跨平台"系统调用前先查它在 Windows 上的真实语义。
+- **测试不得依赖开发机的家目录/环境变量。** `~/.signal-desk/.env` 存在与否会让
+  测试结果随机器而变，而且会把真实凭据读进进程。`conftest.py` 有 autouse 隔离，别绕过它。
+- **`.bat` 必须 CRLF + 无 BOM**，每条退出路径都要 `pause`（否则双击后窗口一闪而过）。
+  开发机是 Linux 跑不了 cmd.exe，能静态查的都在 `tests/test_launchers.py` 里。
+
 ## 三条不可违反的不变量
 - **INV-1** 求值只能通过 `BarStore.view(symbol, as_of)` 取数（物理截断未来数据）。
   已落地于 `store/bar_store.py`：视图在**构造时**定死截断位置，之后 store 再收到新 bar 也看不到。

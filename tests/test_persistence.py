@@ -7,7 +7,10 @@ from __future__ import annotations
 
 import os
 import pathlib
+import sys
 from typing import Any
+
+import pytest
 
 from sigdesk.core.models import Bar, Timeframe
 from sigdesk.rules.engine import RuleEngine
@@ -374,3 +377,73 @@ def test_watch_refuses_a_second_instance() -> None:
     assert "claim_writer(os.getpid()" in src
     assert "stack.callback(runtime.release_writer" in src, "退出时要让出，否则下次起不来"
     assert "serve.py" in src, "拒绝时要给出正确的替代做法（只读面板）"
+
+
+# ---------------------------------------------------------------- 跨平台存活探测
+
+
+def test_alive_never_calls_os_kill_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """**`os.kill(pid, 0)` 在 Windows 上会真的杀掉那个进程。**
+
+    Python 的 `os.kill` 在 Windows 上没有"信号 0 探测"：除 CTRL_C_EVENT /
+    CTRL_BREAK_EVENT 外走的是 `TerminateProcess()`。而这是生产路径 ——
+    watch.py 启动时 claim_writer 会调它。库里若留着陈旧的写者记录、
+    那个 pid 又被系统回收给了别的进程，启动盯盘就会杀掉一个无关进程。
+
+    开发机是 Linux，跑不到那条分支，所以这里**证明它压根不会走到 os.kill**。
+    """
+    from sigdesk.store import runtime_store
+
+    def boom(*a: object, **k: object) -> None:
+        raise AssertionError("Windows 上绝不能调用 os.kill —— 它会终止目标进程")
+
+    monkeypatch.setattr(runtime_store.sys, "platform", "win32")
+    monkeypatch.setattr(runtime_store.os, "kill", boom)
+    monkeypatch.setattr(runtime_store, "_alive_windows", lambda pid: True)
+    assert runtime_store._alive(12345) is True
+
+    # pid <= 0 要在分支之前就短路掉，不该进任何平台实现
+    monkeypatch.setattr(runtime_store, "_alive_windows", boom)
+    assert runtime_store._alive(0) is False
+    assert runtime_store._alive(-1) is False
+
+
+def test_alive_on_posix_uses_signal_zero() -> None:
+    """POSIX 这条路照旧：自己一定活着，一个不可能存在的 pid 一定不活。"""
+    from sigdesk.store.runtime_store import _alive
+
+    if sys.platform == "win32":  # pragma: no cover - 开发机是 Linux
+        pytest.skip("这条只验 POSIX 分支")
+    assert _alive(os.getpid()) is True
+    assert _alive(2**22) is False
+
+
+def test_alive_assumes_alive_when_the_probe_itself_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**探测失败一律当"还活着"。** 误判成"死了"会放行第二个写者，
+    那正是单写者要防的；误判成"活着"只是多问一句。"""
+    from sigdesk.store import runtime_store
+
+    if sys.platform == "win32":  # pragma: no cover
+        pytest.skip("这条只验 POSIX 分支")
+
+    def denied(*a: object, **k: object) -> None:
+        raise PermissionError("不归你管")
+
+    monkeypatch.setattr(runtime_store.os, "kill", denied)
+    assert runtime_store._alive(12345) is True
+
+    def weird(*a: object, **k: object) -> None:
+        raise OSError("这平台不支持")
+
+    monkeypatch.setattr(runtime_store.os, "kill", weird)
+    assert runtime_store._alive(12345) is True
+
+
+def test_source_documents_why_windows_needs_its_own_path() -> None:
+    """这个坑只要有人"顺手统一一下"就会复活，把理由钉在源码里。"""
+    src = pathlib.Path("src/sigdesk/store/runtime_store.py").read_text(encoding="utf-8")
+    fn = src[src.index("def _alive_windows("):src.index("def _alive(")]
+    assert "TerminateProcess" in fn, "要写明 Windows 上 os.kill 实际会做什么"
+    assert "OpenProcess" in fn and "GetExitCodeProcess" in fn
