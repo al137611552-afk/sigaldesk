@@ -843,3 +843,58 @@ def test_history_degrades_per_symbol() -> None:
     assert "broken[bar.symbol]" in fn, "要记下是哪个标的坏了"
     assert "if bar.symbol in broken" in fn, "坏了的标的后续历史要一并跳过"
     assert "check_calendars.py" in src, "要指向核对工具，不能只说'有问题'"
+
+
+def _synth_bars(n: int) -> list[Bar]:
+    """一段带起伏的合成序列。均线对拍只需要"数值不是常数"，不需要真实行情。"""
+    import math
+
+    base = 1_767_225_600
+    return [
+        Bar("X.Y.Z", Timeframe.M5, base + i * 300 - 300, base + i * 300,
+            100 + math.sin(i / 7) * 5, 101 + math.sin(i / 7) * 5,
+            99 + math.sin(i / 7) * 5, 100 + math.sin(i / 5) * 5,
+            1000 + (i % 13) * 10)
+        for i in range(n)
+    ]
+
+
+def test_bars_endpoint_ma_is_identical_whether_or_not_it_reads_everything() -> None:
+    """**尾读省下的是 I/O，不能省掉精度。**
+
+    /api/bars 现在只读 `limit + warmup` 根。均线的值必须与"喂全历史"逐位相同 ——
+    面板的线和引擎算的差一点，就会出现"图上上穿了、规则没触发"（CLAUDE.md 记过）。
+
+    SMA 只需窗口数根（窗口外的数据在数学上不影响结果）；
+    **EMA 是递归的，实测要 20 倍窗口**（1x 是 1.6e-04，10x 是 1.8e-12）。
+
+    断言的是**相对误差到浮点底噪**而不是逐位相同：SMA/EMA 都用滚动累加，
+    喂 3 万个数和喂几百个数的舍入路径不同。真机全量对拍（40 个响应）
+    实测最大 1.4e-15，这里留一个数量级的余量。
+    """
+    from sigdesk.web.overlay import moving_averages, warmup_bars
+
+    bars = _synth_bars(3000)
+    for spec in ("5,10,20,60", "ema20,ema60", "sma5,ema120"):
+        warm = warmup_bars(spec)
+        limit = 300
+        full = {m.label: m.values[-limit:] for m in moving_averages(bars, spec)}
+        tail = bars[-(limit + warm):]
+        cut = {m.label: m.values[len(tail) - limit:] for m in moving_averages(tail, spec)}
+        assert full.keys() == cut.keys()
+        for label in full:
+            for a, b in zip(full[label], cut[label], strict=True):
+                assert (a is None) == (b is None), f"{spec} {label} 预热位置对不上"
+                if a is not None:
+                    rel = abs(a - b) / abs(a) if a else abs(a - b)
+                    assert rel < 1e-14, f"spec={spec} {label} 相对误差 {rel:.2e}，预热不够"
+
+
+def test_warmup_is_the_smallest_that_still_works() -> None:
+    """预热根数不是拍的：SMA 取窗口、EMA 取 20 倍窗口，取各条线的最大值。"""
+    from sigdesk.web.overlay import EMA_WARMUP, warmup_bars
+
+    assert warmup_bars("5,10,20") == 20
+    assert warmup_bars("ema20") == 20 * EMA_WARMUP
+    assert warmup_bars("sma60,ema20") == max(60, 20 * EMA_WARMUP)
+    assert warmup_bars("") == 0

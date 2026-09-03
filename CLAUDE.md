@@ -166,8 +166,14 @@ ruff check src tests scripts && mypy src
   去重是迁移期的兜底（新旧布局并存时同一根 bar 会被读两遍，且完全看不出来）。
   裁剪必须**保守**（两边各留一天余量：分区键是交易日，与 close_ts 的 UTC 日期能差一天）——
   裁猛了就是静默少一段数据。`test_pruning_never_changes_the_result` 拿"不裁剪"的结果逐根对拍。
-- **裁剪只对有界区间有用**。面板现在请求 `start_ts=0` 拿全量再截尾
-  （1m 读 3 万根只画 220 根，137ms）—— 那是另一件事，要做成"从最新分区往回读够为止"。
+- **裁剪只对有界区间有用**（面板发的是 `start_ts=0` 无界区间）。所以无界那条路
+  走 **`read_tail`**：从最新分区往回读、够了就停；行数用 `count_bars` 从元数据拿。
+  1m 由 3 万根降到 `limit + 预热`，实测 226ms → 12ms。
+- **均线预热根数由 `warmup_bars` 算，别拍**：SMA 取窗口（窗口外的数学上不影响），
+  **EMA 递归要 20 倍窗口**（1x 误差 1.6e-04、10x 1.8e-12）。
+  注意**不是逐位相同** —— 滚动累加的舍入路径随喂入长度而变，全量对拍实测
+  最大相对误差 1.4e-15（约 6 个机器 epsilon）。会造成"图上上穿了、规则没触发"的是
+  **算法或窗口不一致**，不是第 15 位有效数字（引擎自己也在有界窗口上累加）。
 
 - **bar 一律落 `data/bars/`，运行态落 `data/runtime.sqlite3`。**
   六个脚本（backfill/build_continuous/watch/serve/report/paper_run）的 `--data-root`

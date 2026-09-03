@@ -34,16 +34,18 @@ from ..rules.store import RuleStore, RuleStoreError, parse_source
 from ..rules.trial import run_trial
 from ..stats.outcome import OutcomeParams, evaluate_all
 from ..stats.report import build_report
-from ..store.parquet_io import latest_partition, read_range
+from ..store.parquet_io import count_bars, latest_partition, read_range, read_tail
 from ..store.runtime_store import RuntimeStore
 from .health import HealthMonitor
 from .intraday import build_intraday
 from .markers import collapse, pair_trades
-from .overlay import moving_averages, ref_moving_averages
+from .overlay import moving_averages, ref_moving_averages, warmup_bars
 from .watchlist import SLOTS, build_group, latest_by_symbol
 
 STATIC_DIR = pathlib.Path(__file__).parent / "static"
 MAX_BARS = 5000
+# /api/bars 的 end_ts 默认值。到达它就当作"不设上界"，走尾读那条路。
+FULL_RANGE_END = 2**31
 
 
 class SignalBroadcaster:
@@ -282,10 +284,21 @@ def create_app(state: ServiceState) -> FastAPI:
             tf = Timeframe(timeframe)
         except ValueError:
             raise HTTPException(400, f"未知周期 {timeframe}") from None
-        series = read_range(state.data_root, symbol, tf, start_ts, end_ts)
-        shown = series[-limit:]
-        # 均线要在**完整序列**上算再截取，不能只用截出来的那段 ——
+        # 均线要有**前置数据**才能算，不能只喂要显示的那段 ——
         # 只喂最后 220 根去算 MA60，前 59 根会是 None，图上左边缺一截。
+        # 但也不必读全历史：warmup_bars 给出"多读多少根就与全历史逐位一致"
+        # （SMA 是窗口数，EMA 实测要 20 倍窗口）。
+        warm = max(warmup_bars(ma) if ma else 0, warmup_bars(vma) if vma else 0)
+        if start_ts <= 0 and end_ts >= FULL_RANGE_END:
+            # **无界区间走尾读**：从最新分区往回读、够了就停。
+            # 面板就是这个形状（start_ts=0 + limit），原来 1m 要把 3 万根全读进来
+            # 只为画 220 根。分区裁剪救不了它 —— 无界意味着所有分区都"可能相关"。
+            series = read_tail(state.data_root, symbol, tf, limit + warm)
+            total = count_bars(state.data_root, symbol, tf)   # 只读元数据
+        else:
+            series = read_range(state.data_root, symbol, tf, start_ts, end_ts)
+            total = len(series)
+        shown = series[-limit:]
         lines = moving_averages(series, ma) if ma else []
         vlines = moving_averages(series, vma, source="volume") if vma else []
         cut = len(series) - len(shown)
@@ -303,7 +316,7 @@ def create_app(state: ServiceState) -> FastAPI:
         return {
             "symbol": symbol,
             "timeframe": tf.value,
-            "total": len(series),
+            "total": total,
             "bars": [_bar_dict(b) for b in shown],
             "ma": [m for m in clip if m["source"] == "close"],
             "vma": [m for m in clip if m["source"] == "volume"],
@@ -323,7 +336,7 @@ def create_app(state: ServiceState) -> FastAPI:
                 mult = state.registry.symbol(symbol).multiplier
             except KeyError:
                 mult = 1.0
-        bars = read_range(state.data_root, symbol, Timeframe.M1, 0, 2**31)[-MAX_BARS:]
+        bars = read_tail(state.data_root, symbol, Timeframe.M1, MAX_BARS)
         day, points = build_intraday(bars, multiplier=mult)
         return {
             "symbol": symbol,

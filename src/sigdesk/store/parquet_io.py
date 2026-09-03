@@ -248,6 +248,57 @@ def read_range(
     return [by_ts[t] for t in sorted(by_ts)]
 
 
+def count_bars(root: pathlib.Path, symbol: str, timeframe: Timeframe) -> int:
+    """本地一共有多少根，**只读 Parquet 元数据不读行数据**。
+
+    面板标题要显示"共 N 根（显示最近 M 根）"。为了这一个数字把几万根读进内存
+    是划不来的 —— 行数本来就写在每个文件的 footer 里。
+    """
+    base = root / symbol.split(".", 1)[0] / symbol / timeframe.value
+    if not base.exists():
+        return 0
+    total = 0
+    for f in base.glob("*.parquet"):
+        try:
+            total += pq.read_metadata(f).num_rows
+        except Exception:
+            continue
+    return total
+
+
+def read_tail(root: pathlib.Path, symbol: str, timeframe: Timeframe, n: int) -> list[Bar]:
+    """最后 n 根。**从最新的分区往回读，够了就停。**
+
+    面板画一屏只要几百根，却一直是"把全部读进来再截尾" ——
+    1m 读 3 万根只为画 220 根（实测 137ms）。分区裁剪救不了它：
+    面板发的是 start_ts=0 的无界区间，所有分区都"可能相关"。
+
+    行数从文件元数据拿（不读行数据），所以"够了没有"这个判断本身是廉价的。
+    仍按 close_ts 去重 —— 迁移期新旧布局并存时同一根 bar 会出现两次。
+    """
+    if n <= 0:
+        return []
+    base = root / symbol.split(".", 1)[0] / symbol / timeframe.value
+    if not base.exists():
+        return []
+    files = sorted(base.glob("*.parquet"))
+    picked: list[pathlib.Path] = []
+    got = 0
+    for f in reversed(files):
+        picked.append(f)
+        try:
+            got += pq.read_metadata(f).num_rows
+        except Exception:
+            got = 0          # 元数据读不出来就别提前收手，退化成全读
+        if got >= n:
+            break
+    by_ts: dict[int, Bar] = {}
+    for f in sorted(picked):
+        for b in read_bars(f, symbol, timeframe):
+            by_ts[b.close_ts] = b
+    return [by_ts[t] for t in sorted(by_ts)][-n:]
+
+
 def gaps(bars: list[Bar], timeframe: Timeframe) -> list[tuple[int, int]]:
     """相邻 bar 间隔超过一个周期的位置。期货的交易时段间断也会命中 ——
     调用方需结合日历区分"正常休盘"与"真缺口"。"""
@@ -267,7 +318,9 @@ __all__ = [
     "gaps",
     "partition_key",
     "partition_path",
+    "count_bars",
     "read_bars",
     "read_range",
+    "read_tail",
     "write_bars",
 ]

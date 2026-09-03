@@ -247,3 +247,39 @@ def test_read_range_dedupes_across_old_and_new_layouts(tmp_path: pathlib.Path) -
     got = read_range(root, uid, Timeframe.D1, 0, 2**31)
     assert len(got) == len(bars), f"重复读出 {len(got)} 根，应为 {len(bars)}"
     assert [b.close_ts for b in got] == sorted(b.close_ts for b in bars)
+
+
+def test_read_tail_equals_the_tail_of_read_range(tmp_path: pathlib.Path) -> None:
+    """**尾读只是少读文件，不能少给 bar。**
+
+    面板画一屏只要几百根，原来把几万根全读进来再截尾。改成从最新分区往回读，
+    结果必须与"全读再截尾"逐根相同 —— 否则就是图上少一段而毫无提示。
+    """
+    from sigdesk.store.parquet_io import read_range, read_tail
+
+    root = tmp_path / "bars"
+    uid = "CN.SHFE.rb2610"
+    for tf, step in ((Timeframe.M5, 300), (Timeframe.D1, 86_400)):
+        bars = _seed(root, uid, tf, 400, step)
+        full = read_range(root, uid, tf, 0, 2**31)
+        assert len(full) == len(bars)
+        for n in (1, 7, 220, 399, 400, 500, 10_000):
+            assert read_tail(root, uid, tf, n) == full[-n:], f"{tf.value} n={n}"
+    assert read_tail(root, uid, Timeframe.M5, 0) == []
+    assert read_tail(root, "CN.SHFE.nope", Timeframe.M5, 10) == []
+
+
+def test_count_bars_matches_without_reading_rows(tmp_path: pathlib.Path) -> None:
+    """行数从元数据拿。为了标题上的一个数字读几万根不划算。"""
+    from sigdesk.store.parquet_io import count_bars
+
+    root = tmp_path / "bars"
+    uid = "CN.SHFE.rb2610"
+    bars = _seed(root, uid, Timeframe.M5, 250, 300)
+    assert count_bars(root, uid, Timeframe.M5) == len(bars)
+    assert count_bars(root, "CN.SHFE.nope", Timeframe.M5) == 0
+
+    src = pathlib.Path("src/sigdesk/store/parquet_io.py").read_text(encoding="utf-8")
+    fn = src[src.index("def count_bars("):]
+    fn = fn[: fn.index("\n\n\ndef ")]
+    assert "read_bars" not in fn, "算行数不该读行数据"

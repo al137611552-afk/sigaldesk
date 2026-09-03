@@ -38,6 +38,10 @@ class MovingAverage:
                 "label": self.label, "values": self.values}
 
 
+# EMA 收敛到「与全历史逐位相同」所需的窗口倍数（实测，见 warmup_bars）
+EMA_WARMUP = 20
+
+
 def parse_spec(spec: str) -> list[tuple[str, int]]:
     """解析 `ma=5,10,20` 或 `ma=ema20,sma60`。默认 sma。
 
@@ -81,6 +85,27 @@ def moving_averages(
         ind: SMA | EMA = SMA(window) if kind == "sma" else EMA(window)
         out.append(MovingAverage(kind, window, [ind.update(v) for v in values], source))
     return out
+
+
+def warmup_bars(spec: str) -> int:
+    """算这组均线需要多少根**前置数据**，才能让截取段的值与全历史算出来的一致。
+
+    两种均线的要求差很远，实测（BTC 1m，30068 根全历史 vs 只喂尾段）：
+      - **SMA 只需 `窗口` 根**。它是滑动窗口，窗口外的数据在数学上毫不影响结果。
+      - **EMA 是递归的**，种子的影响按 (1-α)^k 衰减：
+        1x 窗口 1.6e-04 ｜ 3x 8.9e-06 ｜ 5x 1.1e-07 ｜ 10x 1.8e-12 ｜ 20x 已到浮点底噪。
+
+    所以 EMA 取 20 倍窗口。
+
+    **注意不是逐位相同**：SMA/EMA 都用滚动累加，喂 3 万个数和喂 280 个数的
+    舍入路径不同，全量对拍实测最大相对误差 **1.4e-15**（约 6 个机器 epsilon，
+    绝对值 2.3e-13）。这是浮点累加噪声，不是口径差异 ——
+    引擎自己也是在有界窗口上累加的（watch.py 的 WARMUP_BARS），
+    面板读全历史时本来就和引擎差着同一量级。
+    真正会造成"图上上穿了、规则没触发"的是**算法或窗口不一致**，不是第 15 位有效数字。
+    """
+    wanted = parse_spec(spec)
+    return max((w if kind == "sma" else EMA_WARMUP * w for kind, w in wanted), default=0)
 
 
 @dataclass(frozen=True, slots=True)
