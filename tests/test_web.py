@@ -955,3 +955,51 @@ def test_stats_reports_the_time_range_as_part_of_the_params() -> None:
     fn = src[src.index("    def stats("):]
     fn = fn[: fn.index("\n    @app.")]
     assert '"since": since, "until": until' in fn, "since/until 要写进 params 带回"
+
+
+def test_horizon_curve_reports_baseline_too_not_just_gross() -> None:
+    """**基准本身也随持有期变** —— 持得越久，行情漂移累积得越多。
+
+    只画毛期望会把「市场在涨」误读成「规则在长持有期上更好」：
+    本地这份实测基准从 +0.0002%（1 根）一路涨到 +0.035%（100 根）。
+    所以曲线的每个点都必须同时带 baseline 与 excess。
+    """
+    src = pathlib.Path("src/sigdesk/stats/baseline.py").read_text(encoding="utf-8")
+    fn = src[src.index("def horizon_curve("):]
+    fn = fn[: fn.index("\n\n\n__all__")]
+    for key in ('"avg_return"', '"baseline"', '"excess"', '"evaluated"'):
+        assert key in fn, f"曲线的每个点要带 {key}"
+
+
+def test_evaluate_all_does_not_rescan_the_series_per_signal() -> None:
+    """**O(信号数 × bar 数) 会把统计页拖到 6 秒。**
+
+    `evaluate` 只用得到 `future[:horizon_bars]`，所以按 close_ts 二分定位后
+    切一小段就够。实测算基准 5795ms -> 133ms（44 倍），且结果逐位不变。
+    """
+    src = pathlib.Path("src/sigdesk/stats/outcome.py").read_text(encoding="utf-8")
+    fn = src[src.index("def evaluate_all("):]
+    fn = fn[: fn.index("\n\n\n")]
+    # **只看代码行**：注释里正好引用了旧写法，连注释一起匹配会误判
+    # （这类"断言匹配到解释性注释"的错在本项目犯过三次）
+    code = "\n".join(ln for ln in fn.splitlines() if not ln.strip().startswith("#"))
+    assert "bisect" in code, "要二分定位，不能每条信号重扫整条序列"
+    assert "for b in series if b.close_ts >" not in code, "又退回全序列扫描了"
+
+
+def test_evaluate_all_matches_the_naive_implementation() -> None:
+    """二分只是少扫，**结果必须与朴素实现逐条相同**。"""
+    from sigdesk.rules.model import Direction, Signal
+    from sigdesk.stats.outcome import OutcomeParams, evaluate, evaluate_all
+
+    bars = _synth_bars(400)
+    p = OutcomeParams(horizon_bars=20)
+    sigs = [
+        Signal(rule_id="r", symbol="X.Y.Z", direction=Direction.LONG,
+               timeframe=Timeframe.M5, fired_at=bars[i].close_ts,
+               trigger_price=bars[i].close, dedup_key=f"k{i}")
+        for i in range(0, 380, 7)
+    ]
+    fast = evaluate_all(sigs, {"X.Y.Z": bars}, p)
+    naive = [evaluate(s, [b for b in bars if b.close_ts > s.fired_at], p) for s in sigs]
+    assert fast == naive

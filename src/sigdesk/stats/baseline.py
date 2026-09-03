@@ -17,7 +17,7 @@ from __future__ import annotations
 import math
 import statistics
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from ..core.models import Bar
@@ -127,4 +127,42 @@ def weighted_baseline(
     )
 
 
-__all__ = ["Baseline", "random_entry_expectation", "standard_error", "weighted_baseline"]
+# 持有期敏感性用的持有期梯子。前密后疏 —— 短持有期之间的差别更值得看，
+# 而 60 根之后曲线通常已经平了。
+HORIZON_LADDER: tuple[int, ...] = (1, 2, 3, 5, 8, 10, 15, 20, 30, 40, 60, 80, 100)
+
+# 扫梯子时用的抽样步长。比单点评估的 DEFAULT_STRIDE 粗 —— 曲线只需要形状，
+# 不需要每一点都精确。实测 13 个持有期：步长 10 要 1.6s，步长 40 只要 0.44s。
+CURVE_STRIDE = 40
+
+
+def horizon_curve(
+    signals: Sequence[Signal],
+    bars_by_symbol: Mapping[str, Sequence[Bar]],
+    params: OutcomeParams,
+    ladder: Sequence[int] = HORIZON_LADDER,
+) -> list[dict[str, Any]]:
+    """期望随持有期怎么变。
+
+    **同时给毛期望和超额**：基准本身也随持有期变（持得越久，行情漂移累积得越多），
+    只画毛期望会把"市场在涨"误读成"规则在长持有期上更好"。
+
+    梯子里超过实际可评价范围的点自然会样本变少，如实带上 `evaluated` 让前端标出来。
+    """
+    out: list[dict[str, Any]] = []
+    for h in ladder:
+        p = replace(params, horizon_bars=h)
+        outs = evaluate_all(list(signals), {k: list(v) for k, v in bars_by_symbol.items()}, p)
+        b = weighted_baseline(outs, bars_by_symbol, p, CURVE_STRIDE)
+        st = summarize([o for o in outs if o.reason is not ExitReason.NO_DATA])
+        out.append({
+            "bars": h, "avg_return": st.avg_return,
+            "baseline": b.avg_return, "excess": b.excess, "evaluated": st.evaluated,
+        })
+    return out
+
+
+__all__ = [
+    "CURVE_STRIDE", "HORIZON_LADDER", "Baseline", "horizon_curve",
+    "random_entry_expectation", "standard_error", "weighted_baseline",
+]

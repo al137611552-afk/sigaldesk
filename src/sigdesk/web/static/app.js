@@ -1089,6 +1089,62 @@ function renderHist(outs) {
   );
 }
 
+
+/* ⑥ 持有期敏感性。现在固定 20 根，这条曲线说明 20 是不是个好选择。
+
+   **两条线一起画**：实线是超额、虚线是毛期望。基准本身也随持有期变
+   （持得越久漂移累积越多 —— 本地这份从 +0.0002% 一路涨到 +0.035%），
+   只画毛期望会把"市场在涨"误读成"规则在长持有期上更好"。 */
+function renderHorizon(rep) {
+  const el = $("#horizon");
+  if (!el) return;
+  clear(el);
+  const pts = rep.horizon_curve || [];
+  if (pts.length < 2) return;
+  const vals = pts.flatMap((r) => [r.excess * 100, r.avg_return * 100]);
+  const lo = Math.min(...vals, 0), hi = Math.max(...vals, 0);
+  const pad = (hi - lo) * 0.15 || 0.01;
+  const Y = (v) => 10 + (hi + pad - v) / (hi - lo + 2 * pad) * 60;
+  const X = (i) => 30 + (i / (pts.length - 1)) * 700;
+
+  el.append(
+    svg("line", { x1: 30, y1: Y(0), x2: 730, y2: Y(0), stroke: "var(--line)",
+                  "stroke-width": 1, "stroke-dasharray": "3 3" }),
+    svg("path", { d: pts.map((r, i) => `${i ? "L" : "M"}${X(i).toFixed(1)} ${Y(r.avg_return * 100).toFixed(1)}`).join(" "),
+                  fill: "none", stroke: "var(--dim)", "stroke-width": 1.2,
+                  "stroke-dasharray": "4 3" }),
+    svg("path", { d: pts.map((r, i) => `${i ? "L" : "M"}${X(i).toFixed(1)} ${Y(r.excess * 100).toFixed(1)}`).join(" "),
+                  fill: "none", stroke: "var(--accent)", "stroke-width": 1.8,
+                  "stroke-linejoin": "round" }),
+  );
+  // 当前口径那一档：竖线 + 标注，一眼看出现在站在曲线的哪个位置
+  const cur = pts.findIndex((r) => r.bars === rep.params.horizon_bars);
+  if (cur >= 0) {
+    el.append(
+      svg("line", { x1: X(cur), y1: 6, x2: X(cur), y2: 74, stroke: "var(--fg)",
+                    "stroke-width": 1, opacity: 0.35 }),
+      svg("circle", { cx: X(cur), cy: Y(pts[cur].excess * 100), r: 3.5, fill: "var(--accent)" }),
+    );
+  }
+  for (const [i, r] of pts.entries()) {
+    if (i % 2 === 0 || i === pts.length - 1) {
+      el.append(svg("text", { x: X(i), y: 88, fill: "var(--dim)", "font-size": 9,
+                              "text-anchor": "middle", "font-family": MONO_FF }, r.bars));
+    }
+  }
+  el.append(
+    svg("text", { x: 30, y: 88, fill: "var(--dim)", "font-size": 9, "font-family": MONO_FF }, ""),
+    svg("text", { x: 26, y: Y(hi), fill: "var(--dim)", "font-size": 9, "text-anchor": "end",
+                  "font-family": MONO_FF }, signed(hi / 100)),
+    svg("text", { x: 26, y: Y(lo) + 6, fill: "var(--dim)", "font-size": 9, "text-anchor": "end",
+                  "font-family": MONO_FF }, signed(lo / 100)),
+    svg("text", { x: 736, y: 14, fill: "var(--accent)", "font-size": 9, "text-anchor": "end",
+                  "font-family": MONO_FF }, "超额"),
+    svg("text", { x: 736, y: 26, fill: "var(--dim)", "font-size": 9, "text-anchor": "end",
+                  "font-family": MONO_FF }, "毛期望（虚线）"),
+  );
+}
+
 async function loadStats(e) {
   if (e) e.preventDefault();
   const sp = statsParams();
@@ -1154,6 +1210,8 @@ async function loadStats(e) {
     renderEquity(rep.outcomes || []);
     renderScatter(rep);
     renderHist(rep.outcomes || []);
+  renderHorizon(rep);
+    renderHorizon(rep);
     renderHours(rep.by_hour);
     for (const [id, group, fmt] of [["#t-symbol", rep.by_symbol, shortSym],
                                     ["#t-rule", rep.by_rule, null],
@@ -1205,6 +1263,7 @@ async function loadStats(e) {
   renderEquity(rep.outcomes || []);
   renderScatter(rep);
   renderHist(rep.outcomes || []);
+  renderHorizon(rep);
   renderHours(rep.by_hour);
   for (const [id, group, fmt] of [["#t-symbol", rep.by_symbol, shortSym],
                                   ["#t-rule", rep.by_rule, null],

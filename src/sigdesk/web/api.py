@@ -32,7 +32,7 @@ from ..rules.loader import load_rules
 from ..rules.model import Rule, Signal
 from ..rules.store import RuleStore, RuleStoreError, parse_source
 from ..rules.trial import run_trial
-from ..stats.baseline import weighted_baseline
+from ..stats.baseline import horizon_curve, weighted_baseline
 from ..stats.outcome import OutcomeParams, evaluate_all
 from ..stats.report import build_report
 from ..store.parquet_io import count_bars, latest_partition, read_close_ts, read_range, read_tail
@@ -581,6 +581,10 @@ def create_app(state: ServiceState) -> FastAPI:
         # （本地这份等权 +10.05%），不减基准的话所有多头规则都显得好。
         # 与 scripts/rule_eval.py 共用 stats/baseline.py 的同一份实现，不另写一套。
         payload["baseline"] = weighted_baseline(outcomes, bars_by_symbol, params).as_dict()
+        # **持有期敏感性**：现在固定 20 根，这条曲线说明 20 是不是个好选择。
+        # 同时给毛期望和超额 —— 基准本身也随持有期变（持得越久漂移累积越多），
+        # 只画毛期望会把"市场在涨"误读成"规则在长持有期上更好"。
+        payload["horizon_curve"] = horizon_curve(sigs, bars_by_symbol, params)
         return payload
 
     # ---- 规则编辑（FR-5.3）。默认关闭，见 ServiceState.rule_store() ----------
