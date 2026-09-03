@@ -365,16 +365,34 @@ class RuntimeStore:
         return cur.rowcount
 
     def signals(
-        self, rule_id: str | None = None, symbol: str | None = None
+        self,
+        rule_id: str | None = None,
+        symbol: str | None = None,
+        since: int | None = None,
+        until: int | None = None,
     ) -> list[dict[str, Any]]:
+        """按条件取信号，升序。
+
+        ``since``/``until`` 是 `fired_at` 的闭区间边界（UTC epoch 秒），
+        **在 SQL 里过滤而不是取回来再筛** —— 信号只增不减（没有清理策略），
+        一年约两万条，全取回来再在 Python 里过滤会越来越慢。
+        `signal_by_time` 索引就是为这个建的。
+        """
         sql = "SELECT * FROM signal"
-        where, params = [], []
+        where: list[str] = []
+        params: list[Any] = []
         if rule_id:
             where.append("rule_id = ?")
             params.append(rule_id)
         if symbol:
             where.append("symbol = ?")
             params.append(symbol)
+        if since is not None:
+            where.append("fired_at >= ?")
+            params.append(int(since))
+        if until is not None:
+            where.append("fired_at <= ?")
+            params.append(int(until))
         if where:
             sql += " WHERE " + " AND ".join(where)
         sql += " ORDER BY fired_at, rule_id, symbol"

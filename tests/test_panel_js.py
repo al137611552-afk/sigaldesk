@@ -735,13 +735,37 @@ def test_empty_feed_explains_which_kind_of_empty() -> None:
     assert '$("#f-rule").value' in fn, "空态文案要看当前筛选的是哪条规则"
 
 
-def test_rule_filter_is_refilled_after_signals_load() -> None:
-    """`fillRuleFilter` 要统计信号条数，就必须在 `S.signals` 之后再填一次 ——
-    boot 前面那次拿不到信号，计数会全是 0、下线规则也进不来（真踩过）。"""
+def test_filters_are_refilled_after_signals_load() -> None:
+    """两个筛选框都要统计信号条数，就必须在信号到货**之后**再填一次 ——
+    boot 前面那次拿不到信号，计数全是 0、下线规则进不来、
+    标的筛选框只剩一个「全部标的」（后者真踩过）。
+
+    断言的是**意图不是写法**：原来钉死 `S.signals = (await api(...`，
+    改成分页加载后就失效了。这里只要求"加载信号那一步之后有重填"。
+    """
     js = pathlib.Path("src/sigdesk/web/static/app.js").read_text(encoding="utf-8")
     boot = js[js.index("async function boot()"):]
-    load_at = boot.index('S.signals = (await api("/api/signals')
-    assert "fillRuleFilter();" in boot[load_at:load_at + 400], "信号加载后要重填筛选框"
+    load_at = boot.index("loadSignalPage(")
+    after = boot[load_at:load_at + 500]
+    assert "fillRuleFilter();" in after, "信号加载后要重填规则筛选框"
+    assert "fillSymbolPicker();" in after, "信号加载后要重填标的筛选框"
+
+
+def test_feed_pages_backwards_from_the_newest() -> None:
+    """**信号只增不减**（没有清理策略），一年约两万条，必须能翻到早期的。
+
+    翻页锚点要**从新往旧数**：从旧往新数的话，新信号一到达锚点就错位了
+    （翻着翻着会重复或跳过）。
+    """
+    js = pathlib.Path("src/sigdesk/web/static/app.js").read_text(encoding="utf-8")
+    fn = js[js.index("async function loadSignalPage("):]
+    fn = fn[: fn.index("\n}\n")]
+    assert "offset=" in fn, "要带 offset 翻页"
+    assert "dedup_key" in fn, "往回翻是追加，必须按 dedup_key 去重"
+
+    feed = js[js.index("function renderFeed()"):]
+    feed = feed[: feed.index("\n}\n")]
+    assert "S.hasOlder" in feed, "只在确实还有更早的时候才显示按钮"
 
 
 def test_moving_averages_skip_warmup_instead_of_drawing_zero(

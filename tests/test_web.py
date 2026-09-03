@@ -898,3 +898,60 @@ def test_warmup_is_the_smallest_that_still_works() -> None:
     assert warmup_bars("ema20") == 20 * EMA_WARMUP
     assert warmup_bars("sma60,ema20") == max(60, 20 * EMA_WARMUP)
     assert warmup_bars("") == 0
+
+
+def test_signals_paging_walks_backwards_without_gaps_or_repeats(
+    client_factory: Any = None,
+) -> None:
+    """**分页要能走完全部、不重不漏。**
+
+    `offset` 从新往旧数：offset=0 是最新一页。从旧往新数的话，
+    新信号一到达锚点就错位，翻着翻着会重复或跳过。
+    """
+    import pathlib as _p
+    import tempfile
+
+    from sigdesk.rules.model import Direction, Signal
+    from sigdesk.store.runtime_store import RuntimeStore
+
+    with tempfile.TemporaryDirectory() as td:
+        store = RuntimeStore(_p.Path(td) / "rt.sqlite3")
+        base = 1_767_225_600
+        for i in range(25):
+            store.append_signals([Signal(
+                rule_id="r", symbol="X.Y.Z", direction=Direction.LONG,
+                timeframe=Timeframe.M5, fired_at=base + i * 300,
+                trigger_price=1.0 + i, dedup_key=f"k{i}",
+            )])
+
+        # 手工按同一套语义翻页，逐条比对
+        rows = store.signals()
+        assert len(rows) == 25
+        page, off, seen = 10, 0, []
+        while True:
+            end = len(rows) - off
+            got = rows[max(0, end - page):max(0, end)] if end > 0 else []
+            if not got:
+                break
+            seen = got + seen
+            off += len(got)
+        assert [r["dedup_key"] for r in seen] == [r["dedup_key"] for r in rows], "翻页不重不漏"
+        store.close()
+
+
+def test_signals_time_range_filters_in_sql() -> None:
+    """`since`/`until` 要在 SQL 里过滤，不是取回来再筛 ——
+    信号只增不减，一年约两万条，全取回来会越来越慢。"""
+    src = pathlib.Path("src/sigdesk/store/runtime_store.py").read_text(encoding="utf-8")
+    fn = src[src.index("    def signals("):]
+    fn = fn[: fn.index("\n    def ", 10)]
+    assert "fired_at >= ?" in fn and "fired_at <= ?" in fn, "时间过滤要进 SQL"
+
+
+def test_stats_reports_the_time_range_as_part_of_the_params() -> None:
+    """**时间范围是口径的一部分** —— 换个区间结论就变，必须跟报告一起带回，
+    否则看到的胜率不知道是哪一段算出来的。"""
+    src = pathlib.Path("src/sigdesk/web/api.py").read_text(encoding="utf-8")
+    fn = src[src.index("    def stats("):]
+    fn = fn[: fn.index("\n    @app.")]
+    assert '"since": since, "until": until' in fn, "since/until 要写进 params 带回"

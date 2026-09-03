@@ -124,8 +124,23 @@
       <label class="chip"><span class="lbl">单边成本</span>
         <input class="mono" type="number" name="cost_bps" value="0" step="0.5" min="0"><span class="lbl">bp</span></label>
       <label class="chip"><input type="checkbox" name="entry_on_next_open" checked><span class="lbl">次根开盘入场</span></label>
+      <!-- **时间范围也是口径**：信号只增不减，不限区间的话两年前的行情会和现在
+           混进同一个期望值里，随着数据变多越来越失真。 -->
+      <label class="chip"><span class="lbl">区间</span>
+        <select class="mono" name="range">
+          <option value="0">全部</option>
+          <option value="30">近 30 天</option>
+          <option value="90">近 90 天</option>
+          <option value="180">近 180 天</option>
+          <option value="365">近一年</option>
+          <option value="custom">自定义</option>
+        </select></label>
+      <label class="chip" id="stats-custom" hidden><span class="lbl">从</span>
+        <input class="mono" type="date" name="since"><span class="lbl">到</span>
+        <input class="mono" type="date" name="until"></label>
       <button type="submit">重算</button>
       <span class="spacer"></span>
+      <span id="stats-range-note" class="lbl"></span>
       <span class="lbl">同根同时触及止损止盈记止损 · 成本双边 · neutral 不进胜率</span>
     </form>
     <div class="stats-grid">

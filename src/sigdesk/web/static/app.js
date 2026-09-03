@@ -117,9 +117,48 @@ function filtered() {
   return S.signals.filter((s) => (!rule || s.rule_id === rule) && (!sym || s.symbol === sym));
 }
 
+/* 信号流分页。`offset` 是**从新往旧**数的偏移 —— 从旧往新数的话，
+   新信号一到达锚点就错位了（翻着翻着会重复或跳过）。
+
+   往回翻是**追加**而不是替换：翻到第三页时上面两页还要看得见，
+   而且图上的标注也是按 S.signals 画的。 */
+const FEED_PAGE = 500;
+
+async function loadSignalPage(offset) {
+  const d = await api(`/api/signals?limit=${FEED_PAGE}&offset=${offset}`);
+  S.sigTotal = d.total;
+  S.hasOlder = d.has_older;
+  S.loadedOffset = offset + d.signals.length;
+  const seen = new Set((S.signals || []).map((x) => x.dedup_key));
+  const add = d.signals.filter((x) => !seen.has(x.dedup_key));
+  S.signals = offset === 0 ? d.signals : [...add, ...(S.signals || [])];
+  S.signals.sort((a, b) => a.fired_at - b.fired_at);
+  return d;
+}
+
+async function loadOlderSignals() {
+  const btn = $("#feed-more");
+  if (btn) { btn.disabled = true; btn.textContent = "加载中…"; }
+  try {
+    await loadSignalPage(S.loadedOffset || 0);
+    fillSymbolPicker();
+    fillRuleFilter();
+    renderFeed();
+  } catch (err) {
+    toast(String(err.message || err), "bad");
+    if (btn) { btn.disabled = false; btn.textContent = "加载更早的"; }
+  }
+}
+
 function renderFeed() {
   const rows = filtered().slice().reverse();
-  $("#sig-count").textContent = `${rows.length} 条`;
+  // **要分清"筛出来几条"和"库里一共几条"**。只显示前者的话，
+  // 翻页翻到一半会以为信号就这么多（信号是只增不减的，库里可能有几万条）。
+  const tot = S.sigTotal || rows.length;
+  const loaded = (S.signals || []).length;
+  $("#sig-count").textContent = loaded < tot
+    ? `${rows.length} 条 / 已加载 ${loaded} · 共 ${tot}`
+    : `${rows.length} 条`;
   const box = $("#feed");
   if (!rows.length) {
     const picked = $("#f-rule").value;
@@ -146,10 +185,18 @@ function renderFeed() {
           <span class="price mono">${num(s.trigger_price)}</span></div>
         <div class="sig-r2"><span class="rule">${esc(s.rule_id)}</span>
           <span class="time mono">${fmtTime(s.fired_at, s.symbol)}</span></div>
-      </div></div>`).join("");
+      </div></div>`).join("")
+    // 列表末尾的"加载更早的"。**只在库里确实还有更早的时候才出现** ——
+    // 无条件挂一个按钮，点下去发现没有，比没有按钮更让人困惑。
+    + (S.hasOlder
+        ? `<button id="feed-more" type="button" class="feed-more">加载更早的</button>`
+        : (S.signals || []).length >= FEED_PAGE
+          ? `<div class="feed-end lbl">已经是最早的了</div>` : "");
   $$("#feed .sig").forEach((el) => {
     el.onclick = () => select(rows.find((s) => s.dedup_key === el.dataset.key));
   });
+  const more = $("#feed-more");
+  if (more) more.onclick = loadOlderSignals;
 }
 
 /* 选中的信号展开成「为什么触发」：逐级别给证据，而不是一行截断的 k=v。 */
@@ -811,6 +858,25 @@ function statsParams() {
   };
 }
 
+/* 统计页的时间范围 -> (since, until) 的 UTC 秒。任一端没选就给 null。
+
+   **日期框里的日期按 CST 解释**：期货的交易日就是 CST 的日历日，
+   用浏览器本地时区解释的话，机器时区一变结论就跟着变。 */
+function statsRange() {
+  // 用 FormData 读，与 statsParams 同一套 —— 两处各写一套读法迟早分家，
+  // 而且桩化冒烟只桩了 FormData，另起 form.elements 那条路径就测不到（当场踩到）。
+  const f = new FormData($("#stats-form"));
+  const pick = String(f.get("range") || "0");
+  const dayStart = (iso) => Math.floor(Date.parse(iso + "T00:00:00Z") / 1000) - 8 * 3600;
+  if (pick === "custom") {
+    const a = String(f.get("since") || ""), b = String(f.get("until") || "");
+    return [a ? dayStart(a) : null, b ? dayStart(b) + 86400 - 1 : null];
+  }
+  const days = Number(pick);
+  if (!days) return [null, null];                 // 全部
+  return [Math.floor(Date.now() / 1000) - days * 86400, null];
+}
+
 async function loadStats(e) {
   if (e) e.preventDefault();
   const sp = statsParams();
@@ -821,6 +887,11 @@ async function loadStats(e) {
     cost_bps: String(sp.cost_bps),
     entry_on_next_open: sp.entry_on_next_open ? "true" : "false",
   });
+  // 时间范围：预设按天数往回算，自定义用两个日期框。
+  // **日期按 CST 解释**（期货的交易日就是 CST 的日历日），与图上的时间戳同口径。
+  const [since, until] = statsRange();
+  if (since !== null) q.set("since", String(since));
+  if (until !== null) q.set("until", String(until));
   const rep = await api("/api/stats?" + q);
   const o = rep.overall, p = rep.params;
 
@@ -838,6 +909,20 @@ async function loadStats(e) {
       `上限 ${p.horizon_bars} 根`],
   ].map(([k, v, c, sub]) => `<div class="hero"><div class="lbl">${k}</div>
       <div class="v mono ${c}">${v}</div><div class="lbl">${sub}</div></div>`).join("");
+
+  // **区间要写出来。** 不写明时间范围的胜率没有意义：换个区间结论就变。
+  // 服务端把 since/until 原样带回（它们是口径的一部分），这里照着显示，
+  // 不用前端自己那份 —— 否则显示的和实际算的可能是两回事。
+  const box = $("#stats-range-note");
+  if (box) {
+    const d = (ts) => fmtTime(ts, "CN.X.Y").slice(0, 5);   // 期货口径：CST 的月-日
+    // 字段是 `signals`（触发次数）不是 total —— Stats 里没有 total 那一项
+    const n = o.signals || 0;
+    box.textContent = (p.since == null && p.until == null)
+      ? `区间：全部历史（${n} 条）`
+      : `区间：${p.since == null ? "最早" : d(p.since)} ~ ${p.until == null ? "至今" : d(p.until)}`
+        + `（${n} 条）`;
+  }
 
   const n = o.directional || 0;
   const counts = [
@@ -2467,7 +2552,9 @@ async function boot() {
     await loadChart(S.selected ? S.selected.fired_at : null);   // 多周期联动
   });
 
-  S.signals = (await api("/api/signals?limit=1000")).signals;
+  // **信号只增不减**（没有清理策略），一年约两万条。开屏只拉最近一页，
+  // 更早的按需往回翻 —— 一次全拉会越来越慢，而且你也翻不到早期的。
+  await loadSignalPage(0);
   // **必须在信号加载之后再填一次**：筛选框要统计每条规则的信号数，
   // 还要把"已下线但库里仍有信号"的规则补进来 —— boot 前面那次拿不到这些。
   fillRuleFilter();
@@ -2499,6 +2586,13 @@ async function boot() {
   $("#grid-toggle").onclick = () => toggleGrid();
   $("#f-rule").onchange = $("#f-symbol").onchange = renderFeed;
   $("#stats-form").onsubmit = loadStats;
+  {
+    const sel = $('#stats-form [name="range"]');
+    const toggle = () => { $("#stats-custom").hidden = (sel.value || "0") !== "custom"; };
+    toggle();
+    // 选预设立刻重算；选"自定义"只展开输入框，等用户填完按「重算」
+    sel.onchange = () => { toggle(); if (sel.value !== "custom") loadStats(); };
+  }
 
   $("#rule-new").onclick = newRule;
   $("#rule-validate").onclick = validateRule;

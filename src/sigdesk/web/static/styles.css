@@ -351,3 +351,11 @@ button.danger:hover{border-color:var(--down);color:var(--down)}
 .keys-row kbd{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10.5px;
   color:var(--dim);background:var(--line);border-radius:3px;padding:2px 6px;
   justify-self:start}
+
+/* 信号流末尾的"加载更早的"。信号只增不减，早期的要能翻回去。 */
+.feed-more{display:block;width:calc(100% - 16px);margin:8px;padding:6px;
+  border:1px dashed var(--line);background:none;color:var(--dim);
+  border-radius:6px;font-size:11px;cursor:pointer;font-family:inherit}
+.feed-more:hover:not(:disabled){color:var(--fg);border-color:var(--accent)}
+.feed-more:disabled{cursor:default;opacity:.6}
+.feed-end{text-align:center;padding:8px;font-size:10.5px}

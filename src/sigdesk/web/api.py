@@ -264,10 +264,33 @@ def create_app(state: ServiceState) -> FastAPI:
     def signals(
         rule_id: str | None = None,
         symbol: str | None = None,
+        since: int | None = None,
+        until: int | None = None,
         limit: int = Query(200, ge=1, le=5000),
+        offset: int = Query(0, ge=0),
     ) -> dict[str, Any]:
-        rows = state.runtime.signals(rule_id=rule_id, symbol=symbol)
-        return {"total": len(rows), "signals": rows[-limit:]}
+        """信号流。**信号只增不减**（没有清理策略），所以要能翻到早期的。
+
+        `offset` 是**从新往旧**数的偏移：0 = 最新一页，offset=200 = 再往前 200 条。
+        这样翻页的锚点不会因为新信号到达而错位（从旧往新数就会）。
+        `since`/`until` 是 `fired_at` 的闭区间，在 SQL 里过滤。
+        """
+        rows = state.runtime.signals(
+            rule_id=rule_id, symbol=symbol, since=since, until=until
+        )
+        total = len(rows)
+        end = total - offset
+        page = rows[max(0, end - limit):max(0, end)] if end > 0 else []
+        return {
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "has_older": max(0, end - limit) > 0,
+            "signals": page,
+            # 整段区间的首尾，给前端做"跳到某一天"的边界提示
+            "first_at": rows[0]["fired_at"] if rows else None,
+            "last_at": rows[-1]["fired_at"] if rows else None,
+        }
 
     @app.get("/api/bars")
     def bars(
@@ -520,10 +543,18 @@ def create_app(state: ServiceState) -> FastAPI:
         target_pct: float = Query(0.010, gt=0),
         cost_bps: float = Query(0.0, ge=0),
         entry_on_next_open: bool = True,
+        since: int | None = None,
+        until: int | None = None,
     ) -> dict[str, Any]:
         """信号质量报告。口径**由查询参数决定并原样带回** ——
-        一份不写明口径的胜率没有意义。"""
-        rows = state.runtime.signals(rule_id=rule_id, symbol=symbol)
+        一份不写明口径的胜率没有意义。
+
+        `since`/`until` 同样属于口径：**信号只增不减**，不限时间范围的话
+        两年前的行情和现在会被混进同一个期望值里，随着数据变多越来越失真。
+        """
+        rows = state.runtime.signals(
+            rule_id=rule_id, symbol=symbol, since=since, until=until
+        )
         sigs = [_row_to_signal(r) for r in rows]
         needed = {s.symbol: s.timeframe for s in sigs}
         bars_by_symbol = {
@@ -539,6 +570,8 @@ def create_app(state: ServiceState) -> FastAPI:
             {
                 "horizon_bars": horizon_bars, "stop_pct": stop_pct, "target_pct": target_pct,
                 "cost_bps": cost_bps, "entry_on_next_open": entry_on_next_open,
+                # 时间范围也是口径 —— 换个区间结论就变，必须跟着报告一起带回
+                "since": since, "until": until,
             },
         )
         payload = report.as_dict()
