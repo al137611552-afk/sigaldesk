@@ -1506,13 +1506,31 @@ const fitCell = (c) => c.chart.applyOptions({
    预警组模式下九格的 `tf` 全都一样（整组一个周期），拿 tf 匹配会让九格一起变 big；
    而只遍历 G.cells 的话，预警组里双击**什么都不会发生** —— 放大失效，
    连带"放大后才允许缩放"也一并失效（用户报的"不支持放大缩小"就是这个）。 */
+/* **放大态存在三个地方**：`G.zoomed`、`#grid` 上的 `.zoomed`、那一格上的 `.big`。
+   三者必须一起改 —— 只清变量会留下两个症状（都是用户报的，同一个根因）：
+     · 切模式后灰屏：`#grid` 还带 `.zoomed`，而新格子没有 `.big`，
+       于是 `.grid.zoomed .cell{display:none}` 把九格全隐藏了；
+     · 切回来后 Esc 失效：旧格子的 `.big` 还在（看着是放大态），
+       但 `G.zoomed` 已经是 null，Esc 的 `if (G.zoomed)` 不成立，只能再双击一次对上。
+   所以清放大态一律走 clearZoom()，别再单独写 `G.zoomed = null`。 */
+function clearZoom() {
+  G.zoomed = null;
+  $("#grid").classList.remove("zoomed");
+  // 两个 Map 都要扫：切模式时 activeCells() 已经指向新模式，旧模式那格的 .big 就漏了
+  for (const c of [...G.cells.values(), ...G.wcells.values()]) {
+    c.root.classList.remove("big");
+  }
+}
+
 function zoomCell(key) {
   const grid = $("#grid");
   const next = G.zoomed === key ? null : key;
-  G.zoomed = next;
-  grid.classList.toggle("zoomed", !!next);
-  for (const c of activeCells()) {
-    c.root.classList.toggle("big", c.key === next);
+  if (!next) {
+    clearZoom();
+  } else {
+    G.zoomed = next;
+    grid.classList.add("zoomed");
+    for (const c of activeCells()) c.root.classList.toggle("big", c.key === next);
   }
   // 尺寸变了必须显式重算 —— 图表不会自己跟随容器
   requestAnimationFrame(() => {
@@ -1933,7 +1951,7 @@ async function toggleGrid(want) {
   // 预警组里是**整组一个周期**（显示，但绑的是 G.wtf 不是 S.timeframe）
   $("#tf-group").hidden = G.on;
   $("#wl-tabs").hidden = !(G.on && G.mode === "watch");
-  if (!G.on) { G.pinned = null; G.zoomed = null; }
+  if (!G.on) { G.pinned = null; clearZoom(); }
   if (G.on) await renderGrid();
   else { ensureChart(); await loadChart(S.selected?.fired_at); }
 }
@@ -1971,7 +1989,7 @@ function renderGridMode() {
     el.onclick = async () => {
       if (el.dataset.mode === G.mode) return;
       G.mode = el.dataset.mode;
-      G.pinned = null; G.zoomed = null;
+      G.pinned = null; clearZoom();
       await renderGrid();
     };
   });

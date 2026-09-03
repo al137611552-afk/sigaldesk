@@ -31,9 +31,10 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 from sigdesk.core.models import Bar, Timeframe  # noqa: E402
 from sigdesk.core.registry import load_registry  # noqa: E402
 from sigdesk.rules.loader import load_rules  # noqa: E402
-from sigdesk.rules.model import Rule, Signal  # noqa: E402
+from sigdesk.rules.model import Rule  # noqa: E402
 from sigdesk.rules.trial import run_trial  # noqa: E402
-from sigdesk.stats.outcome import ExitReason, OutcomeParams, evaluate_all  # noqa: E402
+from sigdesk.stats.baseline import random_entry_expectation  # noqa: E402
+from sigdesk.stats.outcome import ExitReason, OutcomeParams  # noqa: E402
 from sigdesk.stats.report import summarize  # noqa: E402
 from sigdesk.store.bar_builder import aggregate  # noqa: E402
 from sigdesk.store.parquet_io import read_bars  # noqa: E402
@@ -56,32 +57,6 @@ def load_1m(data_root: pathlib.Path, uid: str) -> list[Bar]:
         out.extend(b for b in read_bars(f, uid, Timeframe.M1) if b.closed)
     out.sort(key=lambda b: b.close_ts)
     return out
-
-
-def random_entry_expectation(
-    bars: list[Bar], direction: str, params: OutcomeParams, stride: int = 10
-) -> tuple[float, int]:
-    """在每一根 bar 上开一笔同方向的单，返回 (平均收益, 样本数)。
-
-    用的是与规则信号完全相同的出场口径（同一个 evaluate_all），
-    所以两者之差就是"选时"带来的部分，不掺口径差异。
-
-    `stride` 是抽样步长：全量要 O(bar 数 x 持有期)，30 万根 5m 在开发机上跑不完。
-    期望值抽样估计即可 —— 步长 10 仍有数千个样本，标准误远小于我们关心的差异量级。
-    """
-    fake = [
-        Signal(
-            rule_id="__random__", symbol=b.symbol, direction=direction,
-            timeframe=b.timeframe, fired_at=b.close_ts, trigger_price=b.close,
-            dedup_key=f"r{i}",
-        )
-        for i, b in enumerate(bars[::stride])
-    ]
-    if not fake:
-        return 0.0, 0
-    outs = evaluate_all(fake, {bars[0].symbol: bars}, params)
-    st = summarize(outs)
-    return st.avg_return, st.evaluated
 
 
 def evaluate_rule(

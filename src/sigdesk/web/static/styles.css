@@ -1,10 +1,17 @@
 /* Signal Desk 面板样式。深色交易终端，视觉基线见 docs/design/（ADR-0009）。
    数字一律 tabular-nums 对齐 —— 盯盘时列与列要能竖着比。 */
 :root{
+  /* **必须声明 color-scheme**：不声明的话浏览器把**原生控件**按浅色渲染 ——
+     下拉展开后的选项列表是白底、日期选择器是白底、滚动条也是浅色，
+     配我们设的灰字就是"白底灰字看不清"（用户报的）。
+     这些原生部件用 CSS 改不动（在 shadow DOM 里），只有 color-scheme 管得住。 */
+  color-scheme: dark;
   --bg:#0e1116; --panel:#161b22; --panel-2:#121720; --line:#262c36;
   --fg:#e6edf3; --dim:#8b949e;
   --up:#26a69a; --down:#ef5350; --warn:#d29922; --accent:#58a6ff;
 }
+/* 兜底：个别浏览器不认 color-scheme 时，至少让选项列表跟着走 */
+option{background:var(--panel);color:var(--fg)}
 *{box-sizing:border-box}
 html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--fg);overflow:hidden;

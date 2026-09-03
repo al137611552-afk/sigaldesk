@@ -1195,3 +1195,29 @@ def test_chips_have_a_pinned_height() -> None:
     block = css[css.index(".chip{"):]
     block = block[: block.index("}")]
     assert "min-height" in block and "box-sizing:border-box" in block
+
+
+def test_zoom_state_is_cleared_in_one_place() -> None:
+    """**放大态存在三个地方**：`G.zoomed`、`#grid` 的 `.zoomed`、那一格的 `.big`。
+    只清变量会同时产生两个症状（用户报的，同一根因）：
+
+    - 切模式后**灰屏**：`#grid` 还带 `.zoomed`、新格子没有 `.big`，
+      于是 `.grid.zoomed .cell{display:none}` 把九格全隐藏；
+    - 切回来后 **Esc 失效**：旧格子的 `.big` 还在（看着是放大态），
+      但 `G.zoomed` 已是 null，`if (G.zoomed)` 不成立，只能再双击一次对上。
+    """
+    js = APP.read_text(encoding="utf-8")
+    fn = js[js.index("function clearZoom()"):]
+    fn = fn[: fn.index("\n}\n")]
+    assert 'classList.remove("zoomed")' in fn, "要清 #grid 上的 .zoomed"
+    assert 'classList.remove("big")' in fn, "要清格子上的 .big"
+    assert "G.cells.values()" in fn and "G.wcells.values()" in fn, (
+        "两个 Map 都要扫 —— 切模式时 activeCells() 已指向新模式，旧模式那格会漏"
+    )
+
+    # 除了 clearZoom 自己和 zoomCell 的赋值，别处不许再单独写 G.zoomed = null
+    others = [
+        ln for ln in js.splitlines()
+        if "G.zoomed = null" in ln and "clearZoom" not in ln
+    ]
+    assert len(others) == 1, f"清放大态一律走 clearZoom()，这些没走：{others}"

@@ -32,6 +32,7 @@ from ..rules.loader import load_rules
 from ..rules.model import Rule, Signal
 from ..rules.store import RuleStore, RuleStoreError, parse_source
 from ..rules.trial import run_trial
+from ..stats.baseline import weighted_baseline
 from ..stats.outcome import OutcomeParams, evaluate_all
 from ..stats.report import build_report
 from ..store.parquet_io import count_bars, latest_partition, read_close_ts, read_range, read_tail
@@ -576,6 +577,10 @@ def create_app(state: ServiceState) -> FastAPI:
         )
         payload = report.as_dict()
         payload["outcomes"] = [o.as_dict() for o in outcomes]
+        # **基准与超额**：CLAUDE.md 定的判据是超额不是毛收益 —— 样本区间自带漂移
+        # （本地这份等权 +10.05%），不减基准的话所有多头规则都显得好。
+        # 与 scripts/rule_eval.py 共用 stats/baseline.py 的同一份实现，不另写一套。
+        payload["baseline"] = weighted_baseline(outcomes, bars_by_symbol, params).as_dict()
         return payload
 
     # ---- 规则编辑（FR-5.3）。默认关闭，见 ServiceState.rule_store() ----------
