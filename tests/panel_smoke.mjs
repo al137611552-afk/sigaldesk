@@ -208,6 +208,15 @@ function el() {
     },
     querySelector: () => el(),
     querySelectorAll: () => [],
+    // SVG 图表是 append 出来的，clear() 靠 firstChild/removeChild 清空。
+    // 这三个要维护**真实的父子关系** —— 只写成空函数的话
+    // "换了数据要把上一张图清掉"这条就永远测不到（remove() 那次踩过一模一样的坑）。
+    setAttribute(k, v) { (node.attrs ||= {})[k] = String(v); },
+    getAttribute(k) { return (node.attrs || {})[k] ?? null; },
+    append(...kids) { node.children.push(...kids); },
+    appendChild(k) { node.children.push(k); return k; },
+    removeChild(k) { node.children = node.children.filter((c) => c !== k); return k; },
+    get firstChild() { return node.children[0] || null; },
     getBoundingClientRect: () => ({ width: 660, height: 128, left: 0, top: 0 }),
     hidden: false,
     dataset: {},
@@ -272,7 +281,10 @@ class FormData {
 }
 const sandbox = {
   document: { querySelector: get, querySelectorAll: () => [], addEventListener() {},
-              createElement: () => el() },
+              createElement: () => el(),
+              // **SVG 元素走 createElementNS**（质量统计的四个图表全用它）。
+              // 桩里少这一个方法，那四个渲染函数就整条路径没测到 —— 当场抓到过。
+              createElementNS: () => el() },
   FormData, console, URLSearchParams, Date, Math, JSON, Number, String, Object, Array,
   Set, Map, Error, encodeURIComponent, setInterval: () => 0, clearInterval: () => {},
   ResizeObserver: class { observe() {} },

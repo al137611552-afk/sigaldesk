@@ -900,6 +900,195 @@ function statsRange() {
   return [Math.floor(Date.now() / 1000) - days * 86400, null];
 }
 
+
+/* ── 质量统计的四个分析区块 ──────────────────────────
+ *
+ * 全部画在**服务端给的数据**上：`rep.baseline`（基准/超额/标准误，与
+ * scripts/rule_eval.py 同一份实现）和 `rep.outcomes`（每条信号的
+ * ret / mfe / mae / entry_ts）。前端不重算任何口径 —— 重算一遍看着一样，
+ * 口径一偏就会出现"面板说赚、报告说亏"。
+ */
+
+const SVGNS = "http://www.w3.org/2000/svg";
+const svg = (tag, attrs, text) => {
+  const el = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v));
+  if (text !== undefined) el.textContent = String(text);
+  return el;
+};
+const clear = (el) => { while (el.firstChild) el.removeChild(el.firstChild); };
+// 只有 font-family（612 行那个 MONO 是 canvas 用的字体简写，带字号，两回事）
+const MONO_FF = "ui-monospace,Menlo,Consolas,monospace";
+
+/* ① 超额收益。**区间跨零 = 这份样本分辨不出优势**，此时一律用中性灰，
+   不给涨跌色 —— 颜色本身就是"结论站不站得住"的编码。 */
+function renderExcess(rep) {
+  const box = $("#excess-cards"), ci = $("#excess-ci"), note = $("#excess-note");
+  if (!box) return;
+  const b = rep.baseline, o = rep.overall;
+  const n = o.evaluated || 0;
+  if (!b || !n) {
+    box.innerHTML = "";
+    clear(ci);
+    note.innerHTML = '<div class="callout">还没有可评价的信号，算不出基准。</div>';
+    return;
+  }
+  const se = b.se, lo = b.excess - 2 * se, hi = b.excess + 2 * se;
+  const crosses = !(se > 0) || (lo < 0 && hi > 0);
+  const col = crosses ? "var(--dim)" : (b.excess > 0 ? "var(--up)" : "var(--down)");
+
+  box.innerHTML = [
+    ["规则期望 / 条", signed(o.avg_return), cls(o.avg_return), ""],
+    ["随机进场基准", signed(b.avg_return), "dim", ""],
+    ["超额", signed(b.excess), "", `style="color:${col}"`],
+  ].map(([k, v, c, extra]) =>
+    `<div class="c"${k === "超额" && !crosses ? ` style="border-color:${col}"` : ""}>`
+    + `<div class="lbl">${k}</div>`
+    + `<div class="v mono ${c}" ${extra}>${v}</div></div>`).join("");
+
+  // 以零为中心的区间条：灰条=95% 区间，圆点=点估计，虚线=零
+  clear(ci);
+  const span = Math.max(Math.abs(lo), Math.abs(hi), 1e-9) * 1.25;
+  const X = (v) => 370 + (v / span) * 370;
+  ci.append(
+    svg("line", { x1: 0, y1: 30, x2: 740, y2: 30, stroke: "var(--line)", "stroke-width": 1 }),
+    svg("line", { x1: 370, y1: 6, x2: 370, y2: 34, stroke: "var(--dim)",
+                  "stroke-width": 1, "stroke-dasharray": "3 3" }),
+    svg("rect", { x: X(lo), y: 15, width: Math.max(2, X(hi) - X(lo)), height: 7, rx: 3.5,
+                  fill: crosses ? "#8b949e55" : (b.excess > 0 ? "#26a69a55" : "#ef535055") }),
+    svg("circle", { cx: X(b.excess), cy: 18.5, r: 4.5, fill: col }),
+    svg("text", { x: 370, y: 47, fill: "var(--dim)", "font-size": 10,
+                  "text-anchor": "middle", "font-family": MONO_FF }, "0"),
+    svg("text", { x: 2, y: 47, fill: "var(--dim)", "font-size": 10,
+                  "font-family": MONO_FF }, signed(-span)),
+    svg("text", { x: 738, y: 47, fill: "var(--dim)", "font-size": 10,
+                  "text-anchor": "end", "font-family": MONO_FF }, signed(span)),
+  );
+
+  const range = `${signed(lo)} ~ ${signed(hi)}`;
+  note.innerHTML = crosses
+    ? `<div class="callout"><b>95% 区间跨零</b>，这份样本分辨不出优势。`
+      + `<span class="mono"> ${esc(range)}</span>　`
+      + `<span class="lbl">n=${n} · 标准误 ±${(se * 100).toFixed(4)}%</span><br>`
+      + `样本量翻四倍才能把区间收窄一半 —— 在此之前不要据此调参数。</div>`
+    : `<div class="legend"><span><i class="swatch" style="background:${col}"></i>`
+      + `95% 区间 <span class="mono">${esc(range)}</span></span>`
+      + `<span class="lbl">n=${n} · 标准误 ±${(se * 100).toFixed(4)}% · 区间未跨零</span></div>`;
+}
+
+/* ② 权益曲线 + 回撤。回答"优势是稳定累积还是靠某几天"。 */
+function renderEquity(outs) {
+  const el = $("#equity");
+  if (!el) return;
+  clear(el);
+  const rows = outs.filter((o) => o.reason !== "no_data")
+    .slice().sort((a, b) => a.entry_ts - b.entry_ts);
+  if (rows.length < 2) {
+    el.append(svg("text", { x: 370, y: 50, fill: "var(--dim)", "font-size": 11,
+                            "text-anchor": "middle" }, "可评价的信号还太少，画不出曲线"));
+    return;
+  }
+  let cum = 0, peak = 0, maxDd = 0;
+  const eq = [], dd = [];
+  for (const r of rows) {
+    cum += r.ret * 100;                 // ret 是小数，这里统一按百分点累加
+    peak = Math.max(peak, cum);
+    maxDd = Math.max(maxDd, peak - cum);
+    eq.push(cum); dd.push(peak - cum);
+  }
+  const top = Math.max(...eq, 0.1), bot = Math.min(...eq, -0.1);
+  const Y = (v) => 8 + (top - v) / (top - bot) * 62;
+  const X = (i) => (i / (eq.length - 1)) * 740;
+  const ddMax = Math.max(...dd, 1e-9);
+  el.append(
+    svg("line", { x1: 0, y1: Y(0), x2: 740, y2: Y(0), stroke: "var(--line)",
+                  "stroke-width": 1, "stroke-dasharray": "3 3" }),
+    svg("path", { d: "M0 96 " + dd.map((v, i) => `L${X(i).toFixed(1)} ${(96 - (v / ddMax) * 18).toFixed(1)}`).join(" ") + " L740 96 Z",
+                  fill: "#ef535022" }),
+    svg("path", { d: eq.map((v, i) => `${i ? "L" : "M"}${X(i).toFixed(1)} ${Y(v).toFixed(1)}`).join(" "),
+                  fill: "none", stroke: cum >= 0 ? "var(--up)" : "var(--down)",
+                  "stroke-width": 1.6, "stroke-linejoin": "round" }),
+    svg("text", { x: 4, y: 10, fill: "var(--dim)", "font-size": 10, "font-family": MONO_FF },
+        `累计 ${cum >= 0 ? "+" : ""}${cum.toFixed(2)}%`),
+    svg("text", { x: 736, y: 94, fill: "var(--dim)", "font-size": 10,
+                  "text-anchor": "end", "font-family": MONO_FF }, `最大回撤 ${maxDd.toFixed(2)}%`),
+  );
+}
+
+/* ③ 浮盈/浮亏散点。**止盈线是水平的、止损线是垂直的**，标签各自贴在自己那条线旁。 */
+function renderScatter(rep) {
+  const el = $("#scatter");
+  if (!el) return;
+  clear(el);
+  const outs = rep.outcomes.filter((o) => o.reason !== "no_data");
+  if (!outs.length) return;
+  const p = rep.params;
+  const maeMax = Math.max(...outs.map((o) => Math.abs(o.mae)), p.stop_pct, 1e-6) * 1.05;
+  const mfeMax = Math.max(...outs.map((o) => o.mfe), p.target_pct, 1e-6) * 1.05;
+  const PX = (mae) => 34 + (1 - Math.abs(mae) / maeMax) * 320;
+  const PY = (mfe) => 94 - (mfe / mfeMax) * 88;
+  el.append(svg("rect", { x: 34, y: 6, width: 320, height: 88, fill: "#12172080" }));
+  const ty = PY(p.target_pct), sx = PX(p.stop_pct);
+  el.append(
+    svg("line", { x1: 34, y1: ty, x2: 354, y2: ty, stroke: "var(--up)",
+                  "stroke-width": 1, "stroke-dasharray": "4 3" }),
+    svg("text", { x: 354, y: Math.max(12, ty - 3), fill: "var(--up)", "font-size": 9,
+                  "text-anchor": "end", "font-family": MONO_FF }, "止盈"),
+    svg("line", { x1: sx, y1: 6, x2: sx, y2: 94, stroke: "var(--down)",
+                  "stroke-width": 1, "stroke-dasharray": "4 3" }),
+    svg("text", { x: sx, y: 104, fill: "var(--down)", "font-size": 9,
+                  "text-anchor": "middle", "font-family": MONO_FF }, "止损"),
+  );
+  for (const o of outs) {
+    el.append(svg("circle", { cx: PX(o.mae).toFixed(1), cy: PY(o.mfe).toFixed(1), r: 2.4,
+                              fill: o.ret > 0 ? "var(--up)" : "var(--down)", opacity: 0.75 }));
+  }
+  el.append(
+    svg("text", { x: 30, y: 12, fill: "var(--dim)", "font-size": 9,
+                  "text-anchor": "end", "font-family": MONO_FF }, "浮盈"),
+    svg("text", { x: 30, y: 94, fill: "var(--dim)", "font-size": 9,
+                  "text-anchor": "end", "font-family": MONO_FF }, "0"),
+    svg("text", { x: 34, y: 120, fill: "var(--dim)", "font-size": 9, "font-family": MONO_FF },
+        "← 浮亏更大"),
+    svg("text", { x: 354, y: 120, fill: "var(--dim)", "font-size": 9,
+                  "text-anchor": "end", "font-family": MONO_FF }, "浮亏 0"),
+  );
+}
+
+/* ④ 收益分布。均值线离零太近时两个标签会叠在一起（设计稿阶段实测），靠锚点错开。 */
+function renderHist(outs) {
+  const el = $("#hist");
+  if (!el) return;
+  clear(el);
+  const vals = outs.filter((o) => o.reason !== "no_data").map((o) => o.ret * 100);
+  if (vals.length < 2) return;
+  const lo = Math.min(...vals, 0), hi = Math.max(...vals, 0);
+  const NB = 15, counts = new Array(NB).fill(0);
+  for (const v of vals) counts[Math.min(NB - 1, Math.floor((v - lo) / ((hi - lo) || 1) * NB))]++;
+  const cmax = Math.max(...counts, 1), bw = 360 / NB;
+  const X = (v) => ((v - lo) / ((hi - lo) || 1)) * 360;
+  counts.forEach((c, i) => {
+    const mid = lo + (i + 0.5) / NB * (hi - lo);
+    el.append(svg("rect", { x: (i * bw + 1).toFixed(1), width: (bw - 2).toFixed(1),
+      y: (94 - (c / cmax) * 86).toFixed(1), height: Math.max(c ? 1 : 0, (c / cmax) * 86).toFixed(1),
+      rx: 1, fill: mid >= 0 ? "#26a69a99" : "#ef535099" }));
+  });
+  const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+  const near = Math.abs(X(mean) - X(0)) < 40;
+  el.append(
+    svg("line", { x1: X(0), y1: 6, x2: X(0), y2: 94, stroke: "var(--dim)",
+                  "stroke-width": 1, "stroke-dasharray": "3 3" }),
+    svg("line", { x1: X(mean), y1: 6, x2: X(mean), y2: 94,
+                  stroke: mean >= 0 ? "var(--up)" : "var(--down)", "stroke-width": 1.4 }),
+    svg("text", { x: X(0), y: 106, fill: "var(--dim)", "font-size": 9,
+                  "text-anchor": "middle", "font-family": MONO_FF }, "0"),
+    svg("text", { x: X(mean), y: 120, fill: mean >= 0 ? "var(--up)" : "var(--down)",
+                  "font-size": 9, "font-family": MONO_FF,
+                  "text-anchor": near ? (X(mean) < X(0) ? "end" : "start") : "middle" },
+        `均值 ${mean >= 0 ? "+" : ""}${mean.toFixed(3)}%`),
+  );
+}
+
 async function loadStats(e) {
   if (e) e.preventDefault();
   const sp = statsParams();
@@ -961,6 +1150,10 @@ async function loadStats(e) {
     $("#excursion").innerHTML = "";
     $("#exc-note").innerHTML =
       '<span class="dim">还没有可评价的信号：需要信号触发后、且其后有足够的 bar 才能评价。</span>';
+    renderExcess(rep);
+    renderEquity(rep.outcomes || []);
+    renderScatter(rep);
+    renderHist(rep.outcomes || []);
     renderHours(rep.by_hour);
     for (const [id, group, fmt] of [["#t-symbol", rep.by_symbol, shortSym],
                                     ["#t-rule", rep.by_rule, null],
@@ -1008,6 +1201,10 @@ async function loadStats(e) {
        <span class="dim">这与「${pct(o.horizon_rate)} 持有到期」是同一件事的两种说法。</span>`
     : '<span class="dim">还没有可评价的信号。</span>';
 
+  renderExcess(rep);
+  renderEquity(rep.outcomes || []);
+  renderScatter(rep);
+  renderHist(rep.outcomes || []);
   renderHours(rep.by_hour);
   for (const [id, group, fmt] of [["#t-symbol", rep.by_symbol, shortSym],
                                   ["#t-rule", rep.by_rule, null],

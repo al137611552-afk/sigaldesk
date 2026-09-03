@@ -393,3 +393,14 @@ button.danger:hover{border-color:var(--down);color:var(--down)}
 /* 信号流的日期筛选：与旁边的「全部规则/全部标的」下拉同一套尺寸 */
 #f-when-custom{margin-top:6px}
 #f-when-custom input[type=date]{flex:1;min-width:0;font-size:11px;padding:4px 6px}
+
+/* ── 质量统计的新增区块 ─────────────────────────── */
+/* 三个数并排：规则期望 / 随机基准 / 超额。超额那张的边框在"区间不跨零"时才上色 ——
+   颜色本身就是"这个结论站不站得住"的编码，跨零时一律中性灰。 */
+.excess-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.excess-cards .c{background:var(--panel);border:1px solid var(--line);
+  border-radius:8px;padding:9px 12px}
+.excess-cards .v{font-size:17px;line-height:1.2;margin-top:2px}
+/* 散点与直方图并排。窄屏落回单列，否则两张图挤成一团。 */
+.stats-pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px}
+@media (max-width:1180px){.stats-pair{grid-template-columns:1fr}}

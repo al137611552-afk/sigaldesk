@@ -170,6 +170,47 @@
           <div id="excursion"></div>
           <div id="exc-note" class="callout"></div>
         </div>
+
+        <!-- ① 超额收益：全页判据。毛收益没有意义 —— 样本区间自带漂移，
+             不减随机进场基准的话所有多头规则都显得好。 -->
+        <div>
+          <div class="sec-title"><b>超额收益</b>
+            <span class="lbl">判据 = 规则期望 − 随机进场基准</span></div>
+          <div id="excess-cards" class="excess-cards"></div>
+          <svg id="excess-ci" viewBox="0 0 740 50" width="100%" height="50"
+               style="margin-top:10px;display:block"></svg>
+          <div id="excess-note"></div>
+        </div>
+
+        <!-- ② 权益曲线：优势是稳定累积还是靠某几天 -->
+        <div>
+          <div class="sec-title"><b>权益曲线</b>
+            <span class="lbl">按信号时间累计 · 下方为回撤</span></div>
+          <svg id="equity" viewBox="0 0 740 96" width="100%" height="96"
+               style="display:block"></svg>
+        </div>
+
+        <!-- ③④ 并排：都是"分布"视角，放一行省高度 -->
+        <div class="stats-pair">
+          <div>
+            <div class="sec-title"><b>浮盈 / 浮亏散点</b><span class="lbl">每点一条信号</span></div>
+            <svg id="scatter" viewBox="0 0 360 126" width="100%" height="126"
+                 style="display:block"></svg>
+          </div>
+          <div>
+            <div class="sec-title"><b>收益分布</b><span class="lbl">每条信号净收益</span></div>
+            <svg id="hist" viewBox="0 0 360 126" width="100%" height="126"
+                 style="display:block"></svg>
+          </div>
+        </div>
+
+        <!-- ⑥ 持有期敏感性：现在固定 20 根，这条曲线说明 20 是不是个好选择 -->
+        <div>
+          <div class="sec-title"><b>持有期敏感性</b>
+            <span class="lbl">期望随持有期怎么变 · 竖线是当前口径</span></div>
+          <svg id="horizon" viewBox="0 0 740 92" width="100%" height="92"
+               style="display:block"></svg>
+        </div>
       </div>
       <div class="stats-col">
         <div>

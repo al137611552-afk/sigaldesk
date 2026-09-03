@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import bisect
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
@@ -228,11 +229,24 @@ def evaluate_all(
     对每条信号取 ``close_ts > fired_at`` 的部分作为未来 —— 物理截断，
     与 INV-1 同一个道理：评价用的数据必须完全落在信号之后。
     """
+    p = params or OutcomeParams()
+    # **二分定位，别每条信号都重扫整条序列。** 原来是
+    # `[b for b in series if b.close_ts > fired_at]`，O(信号数 x bar 数) ——
+    # 3 万根 1m 上算随机进场基准（3000 个抽样信号）要 5.8 秒。
+    # `evaluate` 只用得到 `future[:horizon_bars]`，所以切一小段就够；
+    # 多切两根是给"次根开盘入场"留的余量。
+    keys: dict[str, list[int]] = {}
     out: list[Outcome] = []
     for signal in signals:
         series = bars_by_symbol.get(signal.symbol, [])
-        future = [b for b in series if b.close_ts > signal.fired_at]
-        out.append(evaluate(signal, future, params))
+        if not series:
+            out.append(evaluate(signal, [], params))
+            continue
+        ks = keys.get(signal.symbol)
+        if ks is None:
+            ks = keys[signal.symbol] = [b.close_ts for b in series]
+        i = bisect.bisect_right(ks, signal.fired_at)
+        out.append(evaluate(signal, list(series[i : i + p.horizon_bars + 2]), params))
     return out
 
 
