@@ -2531,7 +2531,21 @@ async function boot() {
   if (S.meta.live) connectSSE();
   await refreshBadges();
   setInterval(refreshBadges, 15000);
-  setInterval(() => $("#clock").textContent = new Date().toISOString().slice(11, 19) + "Z", 1000);
+  // **时钟走市场时间（CST），不是 UTC。** 原来显示 `toISOString()` 的 UTC 时间，
+  // 比国内用户的墙上钟慢 8 小时，而面板上期货的每个时间戳都是 CST —— 全屏就这一个
+  // 表跟别人不一致。用 UTC+8 硬算（与 chartTime/fmtTime 同一口径），不依赖本机时区设置：
+  // 机器时区配错时，其余时间戳照样是对的，只有这个表会偏，那就更难查了。
+  // UTC 放进 title，看加密的时候还用得上。
+  const tick = () => {
+    const el = $("#clock");
+    if (!el) return;
+    const now = Date.now();
+    const hhmmss = (ms) => new Date(ms).toISOString().slice(11, 19);
+    el.textContent = hhmmss(now + 8 * 3600 * 1000) + " CST";
+    el.title = `UTC ${hhmmss(now)}　（期货时间戳按 CST，加密按 UTC）`;
+  };
+  tick();
+  setInterval(tick, 1000);
 }
 
 boot().catch((e) => {

@@ -42,7 +42,7 @@ py -3.12 -m venv .venv
 .venv\Scripts\python.exe -m pytest -q
 ```
 
-应当是 `741 passed`。到这一步就说明代码在这台机器上是好的。
+应当是全部通过（当前 798 项，会随开发增加）。到这一步就说明代码在这台机器上是好的。
 
 ---
 
@@ -170,7 +170,59 @@ py -3.12 -m venv .venv
 
 ---
 
-## 五、备份
+## 五、更新到最新版
+
+**不用重新下载压缩包。** 你是 `git clone` 装的，`git pull` 就够了。
+
+```powershell
+cd $HOME\signal-desk
+
+# 1. 先停掉盯盘进程（Ctrl+C，或任务计划里停掉那个任务）
+#    正在写盘的时候更新代码/搬数据都会出事
+
+# 2. 拉代码
+git pull
+
+# 3. 依赖有变动时才需要（pyproject.toml 改了就跑一次，跑了也没坏处）
+.venv\Scripts\python.exe -m pip install -e ".[dev]"
+
+# 4. 自检
+.venv\Scripts\python.exe -m pytest -q
+
+# 5. 重新启动
+.venv\Scripts\python.exe scripts\watch.py --web 127.0.0.1:8000
+```
+
+**你的数据不会被 `git pull` 碰到。** `data\`、`*.parquet`、`*.sqlite3` 都在
+`.gitignore` 里，凭据在 `C:\Users\<你>\.signal-desk\.env`（也在仓库外）。
+所以更新代码不会丢历史行情、不会丢信号、不会要你重配凭据。
+
+### 数据格式变了的那次：跑一次 compact
+
+**只需要跑这一次**（2026-09-03 之后拉的代码）。日/周/月线的分区方式改了 ——
+原来每个交易日一个文件，日线就成了**一行一个文件**（实测 998 根日线摊在 975 个文件里，
+读一次 789ms）。现在按年分，读同样的数据只要 3ms。
+
+```powershell
+# 盯盘进程必须是停着的
+.venv\Scripts\python.exe scripts\compact.py --dry-run   # 先看要动什么
+.venv\Scripts\python.exe scripts\compact.py             # 真跑
+```
+
+它**先写新分区、逐根校验一致、才删旧文件**；校验不过就一个都不删。
+幂等 —— 再跑一次会说「没有需要合并的分区」。中途断了也不会坏数据，再跑一次即可。
+
+不跑也能用（读的时候会自动去重兜底），只是快不起来。
+
+### 怎么知道该不该更新
+
+```powershell
+git log --oneline -5 HEAD..origin/main   # 先 git fetch，再看差了哪些提交
+```
+
+CHANGELOG.md 里记着每次改了什么、哪些需要额外动作。
+
+## 六、备份
 
 要备份的只有两样：
 
@@ -189,7 +241,7 @@ data\bars\                行情 Parquet（可以重新回补，但很花时间�
 
 凭据在 `C:\Users\<你>\.signal-desk\.env`，**单独存，别跟代码放一起**。
 
-## 六、开机自动跑（可选）
+## 七、开机自动跑（可选）
 
 用「任务计划程序」，别用 `.bat` 双击 —— 关窗口就断了。
 
@@ -205,7 +257,7 @@ data\bars\                行情 Parquet（可以重新回补，但很花时间�
 
 ---
 
-## 七、出问题先看这几条
+## 八、出问题先看这几条
 
 | 现象 | 多半是 |
 |---|---|

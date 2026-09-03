@@ -1085,3 +1085,16 @@ def test_chart_head_buttons_do_not_wrap() -> None:
         block = block[: block.index("}")]
         assert "flex:none" in block, f"{sel} 会在窄头部里被压扁"
     assert "white-space:nowrap" in css[css.index("#grid-toggle{"):][:120]
+
+
+def test_clock_shows_market_time_not_utc() -> None:
+    """右上角时钟要走**市场时间（CST）**，不是 UTC。
+
+    原来显示 `toISOString()` 的 UTC 时间，比国内用户的墙上钟慢 8 小时；
+    而面板上期货的每个时间戳都是 CST —— 全屏就这一个表跟别人不一致（用户报的）。
+    """
+    js = APP.read_text(encoding="utf-8")
+    tick = js[js.index("const tick = () => {"):]
+    tick = tick[: tick.index("\n  };")]
+    assert "8 * 3600 * 1000" in tick, "时钟没有换算到 CST"
+    assert "CST" in tick and "UTC" in tick, "要标出时区，并把 UTC 留在 title 里"
