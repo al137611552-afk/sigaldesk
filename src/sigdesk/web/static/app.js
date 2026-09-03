@@ -81,7 +81,10 @@ function dirIcon(dir, size = 11) {
     ><polygon points="6,0 12,11 0,11" fill="${d.color}"></polygon></svg>`;
 }
 
-async function api(path) {
+async function api(path, ...rest) {
+  // 只读 GET。**多给的参数一律当场报错**：它以前是被静默忽略的，
+  // 于是 api(path, {method:"DELETE"}) 安静地发成了 GET（取消钉住就是这么坏的）。
+  if (rest.length) throw new Error(`api() 只接受 path；要带动词请用 send()：${path}`);
   const r = await fetch(path);
   if (!r.ok) throw new Error(`${path} -> ${r.status}`);
   return r.json();
@@ -211,7 +214,22 @@ async function select(s) {
   S.symbol = s.symbol;
   $("#c-symbol").value = s.symbol;
   renderFeed();
-  await loadChart(s.fired_at);
+  if (!G.on) { await loadChart(s.fired_at); return; }
+
+  // **网格开着时单图是隐藏的**，刷它等于什么都没干 —— 而且它会把 #chart-note
+  // 换成单图的文案（"6014 根（显示最近 1500 根）"），于是标题是新标的、
+  // 九格还是旧标的、说明文字来自一张看不见的图，三处状态互相打架。
+  // 下拉框那条路径一直是分模式的，信号流这条漏了。
+  if (G.mode === "tf") await renderGrid();   // 九周期：九格都换成这个标的
+  // 预警组的九格由服务端的预警组决定，不跟 S.symbol 走，所以不重建。
+
+  // 网格版的"定位到这条信号"：单图靠 setVisibleLogicalRange 把它滚到眼前，
+  // 九格做不到（每格周期不同、窗口也不同），但**锁十字线能做到** ——
+  // 复用 shift+单击那套机器，同一时刻在九个周期上各落在哪根 bar 上一目了然，
+  // 这正是"看大做小"要看的东西。时间要过 chartTime 转换（期货有 8 小时位移）。
+  G.pinned = chartTime(s.fired_at, s.symbol);
+  syncCrosshair(G.pinned, null);
+  renderPinBadge();
 }
 
 /* ── 图表 ───────────────────────────────────────── */
@@ -1503,17 +1521,134 @@ async function loadGrid() {
   requestAnimationFrame(() => cells.forEach(fitCell));
 }
 
-/* Esc：先解锁十字线，再退出放大 —— 两件事都是"我想回到上一层"。
+/* ── 键盘快捷键 ──────────────────────────────────
+ *
+ * 取的是**国内期货软件的手感**（通达信/大智慧/文华）：数字键直接切周期、
+ * PgUp/PgDn 翻品种、Esc 回上一层。盯盘时手不用离开键盘。
+ *
+ * 三条约束，每条都能单独把这个功能变成灾难：
+ * 1. **输入框里一律不响应**。规则编辑页有 textarea，在里面敲 "1d" 会被吃成切周期。
+ * 2. **不碰浏览器已占用的**（Ctrl+数字换标签、Ctrl+W 关页、F5 刷新）。
+ *    所以只用裸键与 Alt+ 组合 —— TradingView 把 Alt+字母 留给画线工具，
+ *    但本项目没有画线工具，这段键位是空的。
+ * 3. **必须有 `?` 帮助**。快捷键不可见，做了等于没做 —— 用的人根本不知道有。
+ */
+const KEYMAP = [
+  ["1 – 9", "切周期（按周期条从左到右）", "通达信手感"],
+  ["Alt+M / H / D / W", "1m / 1h / 1d / 1w", "字母助记，和上面等价"],
+  ["PgUp / PgDn", "上一个 / 下一个标的", "通达信翻品种"],
+  ["J / K", "信号流下一条 / 上一条", ""],
+  ["G", "九宫格开关", ""],
+  ["T", "网格两种模式互换（预警组 ↔ 九周期）", ""],
+  ["[ / ]", "预警组：上一个 / 下一个市场", ""],
+  ["双击格子", "放大这一格", ""],
+  ["Shift+单击", "锁定该时刻，九格十字线对齐", ""],
+  ["Esc", "解锁十字线 → 退出放大 → 关闭本帮助", "逐层回退"],
+  ["?", "显示 / 关闭本帮助", ""],
+];
+const TF_ALIAS = { m: "1m", h: "1h", d: "1d", w: "1w" };
+
+function inEditor(el) {
+  return !!el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName);
+}
+
+/* 周期键要打在**当前可见的那组按钮**上。页面上有两组：单图的 `#tf-group`
+   （网格开着时是 hidden 的）和预警组的 `#grid-mode [data-wtf]`。
+   不分辨的话，网格模式下按数字会去点隐藏按钮 —— 状态变了、屏幕上毫无反应。
+   九周期模式没有周期按钮（九个周期同屏摆着），周期键在那儿本来就没有意义。 */
+function tfButtons() {
+  if (G.on) return G.mode === "watch" ? $$("#grid-mode [data-wtf]") : [];
+  return $$("#tf-group .tf");
+}
+
+function pickTf(tf) {
+  // **走按钮自己的 onclick**，不另写一套切换逻辑（两套迟早分叉）
+  const btn = tfButtons().find((b) => (b.dataset.tf || b.dataset.wtf) === tf);
+  if (btn) btn.onclick();
+}
+
+function stepSymbol(delta) {
+  const sel = $("#c-symbol");
+  const opts = [...sel.options].filter((o) => o.value);
+  const i = opts.findIndex((o) => o.value === sel.value);
+  const next = opts[(i + delta + opts.length) % opts.length];
+  if (!next) return;
+  sel.value = next.value;
+  sel.onchange();
+}
+
+function stepSignal(delta) {
+  const rows = filtered().slice().reverse();
+  if (!rows.length) return;
+  const cur = S.shown ? rows.findIndex((x) => x.dedup_key === S.shown.dedup_key) : -1;
+  const next = rows[Math.min(Math.max(cur + delta, 0), rows.length - 1)];
+  if (next) select(next);
+}
+
+function toggleHelp(force) {
+  const box = $("#keys");
+  if (!box) return;
+  const show = force === undefined ? box.hidden : force;
+  if (show) {
+    box.innerHTML = `<div class="keys-card"><div class="keys-title">键盘快捷键</div>`
+      + KEYMAP.map(([k, what, why]) =>
+          `<div class="keys-row"><kbd>${esc(k)}</kbd><span>${esc(what)}</span>`
+          + `<span class="lbl">${esc(why)}</span></div>`).join("")
+      + `<div class="lbl" style="margin-top:10px">输入框里不响应；Esc 关闭</div></div>`;
+  }
+  box.hidden = !show;
+}
+
+/* Esc 逐层回退：解锁十字线 -> 退出放大 -> 关帮助。
    放大后没有可见的关闭按钮，只能双击，这在全屏状态下很不直觉（用户反馈）。 */
 function onGridKey(ev) {
-  if (ev.key !== "Escape" || !G.on) return;
-  if (G.pinned !== null) {
-    G.pinned = null;
-    syncCrosshair(null, null);
-    renderPinBadge();
+  if (inEditor(ev.target)) return;          // 见上面约束 1
+  if (ev.ctrlKey || ev.metaKey) return;     // 见上面约束 2
+
+  if (ev.key === "Escape") {
+    if (!$("#keys").hidden) { toggleHelp(false); return; }
+    if (!G.on) return;
+    if (G.pinned !== null) {
+      G.pinned = null;
+      syncCrosshair(null, null);
+      renderPinBadge();
+      return;
+    }
+    if (G.zoomed) zoomCell(G.zoomed);
     return;
   }
-  if (G.zoomed) zoomCell(G.zoomed);
+  if (ev.key === "?") { ev.preventDefault(); toggleHelp(); return; }
+
+  if (ev.altKey) {
+    const tf = TF_ALIAS[ev.key.toLowerCase()];
+    if (tf) { ev.preventDefault(); pickTf(tf); }
+    return;
+  }
+  // 数字键按周期条的**显示顺序**取按钮，不写死映射 —— 周期条改了这里自动跟着变
+  if (/^[1-9]$/.test(ev.key)) {
+    const btn = tfButtons()[Number(ev.key) - 1];
+    if (btn) { ev.preventDefault(); btn.onclick(); }
+    return;
+  }
+  switch (ev.key) {
+    case "PageUp": ev.preventDefault(); stepSymbol(-1); break;
+    case "PageDown": ev.preventDefault(); stepSymbol(1); break;
+    case "j": case "J": stepSignal(1); break;
+    case "k": case "K": stepSignal(-1); break;
+    case "g": case "G": toggleGrid(); break;
+    case "t": case "T":
+      if (G.on) { G.mode = G.mode === "watch" ? "tf" : "watch"; renderGrid(); }
+      break;
+    case "[": case "]":
+      if (G.on && G.mode === "watch" && G.wl) {
+        const ks = G.wl.markets.map((m) => m.key);
+        const i = ks.indexOf(G.market);
+        G.market = ks[(i + (ev.key === "]" ? 1 : -1) + ks.length) % ks.length];
+        loadWatch();
+      }
+      break;
+    default: break;
+  }
 }
 
 /* ── 预警组 ─────────────────────────────────────────
@@ -1618,9 +1753,11 @@ function renderWlTabs() {
 
 async function togglePin(e) {
   try {
-    if (e.pinned) await api(`/api/watchlist/pin?symbol=${encodeURIComponent(e.symbol)}`,
-                            { method: "DELETE" });
-    else await send("/api/watchlist/pin", { symbol: e.symbol });
+    // **两个 helper 的签名不一样**：api(path) 只会 GET，send(method, path, body) 才带动词。
+    // 这两行曾经各错各的（钉住把 path 传成了 method，取消钉住给 api 传了个它根本不看的
+    // {method:"DELETE"} 于是发成 GET）—— 两条分支都静默失败，按钮看着就是"点了没反应"。
+    if (e.pinned) await send("DELETE", `/api/watchlist/pin?symbol=${encodeURIComponent(e.symbol)}`);
+    else await send("POST", "/api/watchlist/pin", { symbol: e.symbol });
   } catch (err) {
     toast(String(err.message || err), "bad");
     return;
@@ -2334,6 +2471,10 @@ async function boot() {
   // **必须在信号加载之后再填一次**：筛选框要统计每条规则的信号数，
   // 还要把"已下线但库里仍有信号"的规则补进来 —— boot 前面那次拿不到这些。
   fillRuleFilter();
+  // **两个填充函数都得补调**：boot 前面那次在 S.signals 到货之前跑，counts 是空的。
+  // 只补了 fillRuleFilter 的话，信号流的标的筛选框就只剩一个「全部标的」，
+  // 主下拉框的「有信号」分组和每个标的的条数也一起没了（用户报的就是这个）。
+  fillSymbolPicker();
   renderFeed();
 
   // 优先级：选中的信号 > 最新信号 > 正在被规则监视的标的 > 注册表第一个。
@@ -2384,6 +2525,9 @@ async function boot() {
 
   initAlerts();
   document.addEventListener("keydown", onGridKey);
+  $("#keys-btn").onclick = () => toggleHelp();
+  // 点背景关掉。点在卡片上不关 —— 否则想选中里面的文字都做不到。
+  $("#keys").onclick = (ev) => { if (ev.target.id === "keys") toggleHelp(false); };
   if (S.meta.live) connectSSE();
   await refreshBadges();
   setInterval(refreshBadges, 15000);

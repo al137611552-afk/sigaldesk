@@ -48,6 +48,8 @@
           <div id="grid-mode" class="tf-group" hidden></div>
           <button id="grid-toggle" type="button"
             title="九宫格：同一标的的 9 个周期同屏">九宫格</button>
+          <!-- 快捷键的唯一可见入口。只留 `?` 键的话没人会知道有快捷键。 -->
+          <button id="keys-btn" type="button" title="键盘快捷键（?）">⌨</button>
         </div>
         <div id="wl-tabs" class="wl-tabs" hidden></div>
         <div id="chart"><div id="ma-legend" class="ma-legend"></div></div>
@@ -187,6 +189,7 @@
   </section>
 </div>
 
+<div id="keys" class="keys" hidden></div>
 <div id="toasts" class="toasts"></div>
 
 <script src="/static/vendor/lightweight-charts.standalone.production.js"></script>

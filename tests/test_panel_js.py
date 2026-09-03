@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 import shutil
 import subprocess
 
@@ -704,7 +705,9 @@ def test_shift_click_pins_and_escape_releases() -> None:
     assert "ev.shiftKey" in js and "G.pinned" in js
     esc = js[js.index("function onGridKey("):]
     esc = esc[: esc.index("\n}\n")]
-    assert 'ev.key !== "Escape"' in esc
+    assert 'ev.key === "Escape"' in esc
+    # 断言的是**顺序**不是写法：先解锁十字线，再退放大。倒过来就得按两次 Esc 才回得去。
+    assert esc.index("G.pinned = null") < esc.index("zoomCell(G.zoomed)")
     assert "G.pinned = null" in esc and "zoomCell(G.zoomed)" in esc, "Esc 先解锁，再退出放大"
     assert 'document.addEventListener("keydown", onGridKey)' in js
 
@@ -970,3 +973,115 @@ def test_short_symbol_drops_market_and_exchange() -> None:
     line = next(ln for ln in js.splitlines() if ln.startswith("const shortSym"))
     assert "slice(2)" in line, f"应当去掉前两段: {line}"
     assert "slice(-1)" not in line and "[parts.length - 1]" not in line
+
+
+def _code_lines(src: str) -> str:
+    """去掉整行注释再扫调用点：注释里提到 `send()` 会被当成一处真调用。
+
+    按行过滤，不做词法分析 —— 手写 JS 词法器会被正则字面量和模板串里的引号带偏
+    （试过，它在某处卡进了引号状态，于是后面的注释一条都没剥掉）。
+    调用点本来就不写在行尾注释里，按行足够。
+    """
+    keep = [ln for ln in src.splitlines()
+            if not ln.lstrip().startswith(("//", "*", "/*"))]
+    return "\n".join(keep)
+
+
+def _args_at(src: str, call: str) -> list[list[str]]:
+    """把 `call(` 的每处调用切成顶层实参列表。
+
+    用括号配对而不是正则：实参里有模板串和嵌套调用
+    （`` api(`/x?s=${encodeURIComponent(v)}`) ``），正则按逗号切会切错。
+    """
+    out: list[list[str]] = []
+    i = 0
+    while (i := src.find(call + "(", i)) != -1:
+        before = src[i - 1] if i else " "
+        i += len(call) + 1
+        if before.isalnum() or before in "_$.":   # 跳过 xxxsend( / obj.api( 这类同名尾巴
+            continue
+        depth, cur, args, quote = 0, "", [], ""
+        while i < len(src):
+            ch = src[i]
+            if quote:
+                if ch == "\\":
+                    cur += src[i:i + 2]
+                    i += 2
+                    continue
+                if ch == quote:
+                    quote = ""
+            elif ch in "\"'`":
+                quote = ch
+            elif ch in "([{":
+                depth += 1
+            elif ch in ")]}":
+                if depth == 0:
+                    args.append(cur.strip())
+                    break
+                depth -= 1
+            elif ch == "," and depth == 0:
+                args.append(cur.strip())
+                cur = ""
+                i += 1
+                continue
+            cur += ch
+            i += 1
+        out.append(args)
+    return out
+
+
+def test_send_and_api_call_sites_match_their_signatures() -> None:
+    """两个 helper 长得像、签名不一样，**用混了两条都是静默失败**。
+
+    `api(path)` 只会 GET；带动词必须用 `send(method, path, body)`。
+    钉住按钮曾经两条分支各错各的：钉住把 path 传成了 method（fetch 拿到非法动词，
+    请求根本没发出去），取消钉住给 api 传了个它压根不看的 `{method:"DELETE"}`
+    （于是发成 GET，撞 405）。两条都不报错、不进控制台，按钮看着就是"点了没反应"。
+
+    所以这里不点名某一行，而是**把两个 helper 的调用点都过一遍**。
+
+    局限：只看 `await` 过的调用点（这样才不用分辨注释和字符串里提到的 "send()"）。
+    没 await 的调用扫不到 —— 但那本身就是另一个 bug（错误没人接得住）。
+    """
+    js = _code_lines(APP.read_text(encoding="utf-8"))
+    verbs = {'"GET"', '"POST"', '"PUT"', '"DELETE"', '"PATCH"'}
+
+    # 扫 `await send(` 而不是 `send(`：函数定义本身、以及错误消息字符串里
+    # 提到的 "send()" 都自然被排除，不用去分辨引号和注释。
+    bad_send = [a for a in _args_at(js, "await send") if not a or a[0] not in verbs]
+    assert not bad_send, f"send() 第一个参数必须是 HTTP 动词字面量，这些不是：{bad_send}"
+
+    bad_api = [a for a in _args_at(js, "await api") if len(a) > 1]
+    assert not bad_api, f"api() 只接受 path，多给的参数会被静默忽略：{bad_api}"
+
+    # 光靠测试守不住 —— 运行时也得炸，不然下次直接在浏览器里静默走 GET
+    assert "api() 只接受 path" in APP.read_text(encoding="utf-8"), \
+        "api() 里要有多参即抛的运行时保护"
+
+
+def test_pin_button_is_a_reachable_hit_target() -> None:
+    """图标 11px，但**可点区域不能也是 11px** —— 九宫格里几乎点不中（用户反馈"点击不了"）。
+
+    `flex:none` 同样是必须的：头部是 nowrap + overflow:hidden，
+    能压缩的 flex item 会在窄格子里被挤到没有宽度，那就真的点不着了。
+    """
+    css = pathlib.Path("src/sigdesk/web/static/styles.css").read_text(encoding="utf-8")
+    block = css[css.index(".cell-pin{"):]
+    block = block[: block.index("}")]
+    assert "flex:none" in block, "钉图标会被窄格子挤扁"
+    size = [int(v) for v in re.findall(r"(?:width|height):(\d+)px", block)]
+    assert size and min(size) >= 24, f"点击靶子太小：{size}（至少 24px）"
+
+
+def test_chart_head_buttons_do_not_wrap() -> None:
+    """chart-head 是 flex 行，**不写 flex:none 就会被压到最小宽度**，
+    「九宫格」三个字竖着排成三行。加「⌨」之前它已经折成两行了，只是没人注意到。
+
+    同一个坑在 cell-head 上也踩过（那边靠 flex-wrap:nowrap 钉住）。
+    """
+    css = pathlib.Path("src/sigdesk/web/static/styles.css").read_text(encoding="utf-8")
+    for sel in ("#grid-toggle", "#keys-btn"):
+        block = css[css.index(sel + "{"):]
+        block = block[: block.index("}")]
+        assert "flex:none" in block, f"{sel} 会在窄头部里被压扁"
+    assert "white-space:nowrap" in css[css.index("#grid-toggle{"):][:120]

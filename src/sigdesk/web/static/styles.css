@@ -66,8 +66,19 @@ input:focus,select:focus{outline:none;border-color:var(--accent)}
    否则它会被当成又一个按钮的一部分。 */
 .tf-group .seg-lbl{color:var(--dim);font-size:11px;letter-spacing:.3px;
   margin:0 4px 0 10px;white-space:nowrap;line-height:1}
+/* **nowrap 是必须的**：加了「⌨」按钮之后，头部一挤「九宫格」就折成"九宫/格"两行，
+   把整条控件栏顶高（截图里当场看到）。同一个坑在 chart-head 和 cell-head 上各踩过一次。 */
 .tf{padding:3px 9px;border:1px solid var(--line);background:var(--panel);color:var(--dim);
-  border-radius:5px;font-size:11px;cursor:pointer;font-family:inherit}
+  border-radius:5px;font-size:11px;cursor:pointer;font-family:inherit;white-space:nowrap}
+/* **头部这两个按钮都要 flex:none + nowrap**：chart-head 是 flex 行，
+   不写就会被压到最小宽度，「九宫格」三个字竖着排成三行（实测高 46px / 单行 15px）。
+   加「⌨」之前它就已经折成两行了，只是没人注意。 */
+#grid-toggle{flex:none;white-space:nowrap}
+/* 快捷键入口：只有一个字符，别让它占一个按钮那么宽 */
+#keys-btn{padding:3px 7px;border:1px solid var(--line);background:var(--panel);
+  color:var(--dim);border-radius:5px;font-size:12px;cursor:pointer;line-height:1.35;
+  font-family:inherit;flex:none}
+#keys-btn:hover{color:var(--fg);border-color:var(--accent)}
 .tf.active{color:var(--fg);border-color:var(--accent)}
 #chart{flex:1;min-height:200px;position:relative}
 .chart-empty{position:absolute;inset:0;display:flex;align-items:center;
@@ -307,8 +318,15 @@ button.danger:hover{border-color:var(--down);color:var(--down)}
 .cell.unread .cell-mark{background:var(--accent)}
 /* 钉图标常态隐藏，悬停才淡出现；钉住后常显。
    九个格子挂九个图标会一直抢注意力。 */
-.cell-pin{background:none;border:none;padding:0;cursor:pointer;display:flex;align-items:center;
+/* **靶子要比图标大**：图标 11px，但 11×11 的可点区域在九宫格里几乎点不中
+   （用户反馈"点击不了"，一半原因在这）。用负 margin 撑出 24×24 的热区，
+   视觉上仍占 11px 的位。`flex:none` 是防它在窄格子里被挤扁 —— 头部是
+   nowrap+overflow:hidden，能压缩的 flex item 会被压到没有宽度。 */
+.cell-pin{background:none;border:none;cursor:pointer;display:flex;flex:none;
+  align-items:center;justify-content:center;width:24px;height:24px;margin:-6px;
   color:var(--dim);opacity:0;transition:opacity .12s}
+/* 已钉住的**永远可见**：它代表"我人工判断还要观察"，藏起来就等于没钉。
+   只有未钉住的那个才靠 hover 浮现（否则九个格子九个图标，全是噪声）。 */
 .cell:hover .cell-pin{opacity:.55}
 .cell-pin.on{color:var(--accent);opacity:1}
 .cell-pin:hover{color:var(--accent);opacity:1}
@@ -320,3 +338,18 @@ button.danger:hover{border-color:var(--down);color:var(--down)}
 /* 空槽：看着像"留着位子"，不像"坏了" */
 .cell-slot{flex:1;display:flex;align-items:center;justify-content:center;
   border:1px dashed var(--line);margin:8px;border-radius:6px;color:var(--dim);font-size:11px}
+
+/* ── 快捷键帮助（按 ?）──────────────────────────────
+   快捷键不可见就等于不存在 —— 用的人根本不知道有。这层是它唯一的入口。 */
+.keys{position:fixed;inset:0;z-index:60;display:flex;align-items:center;
+  justify-content:center;background:rgba(0,0,0,.55)}
+/* 不用再写 .keys[hidden] —— 顶部那条全局 [hidden]{display:none!important} 管得住 */
+.keys-card{background:var(--bg);border:1px solid var(--line);border-radius:8px;
+  padding:16px 18px;min-width:420px;max-height:80vh;overflow:auto;
+  box-shadow:0 8px 32px rgba(0,0,0,.5)}
+.keys-title{font-size:13px;color:var(--fg);margin-bottom:10px}
+.keys-row{display:grid;grid-template-columns:150px 1fr auto;gap:10px;
+  align-items:center;padding:3px 0;font-size:11.5px;color:var(--fg)}
+.keys-row kbd{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10.5px;
+  color:var(--dim);background:var(--line);border-radius:3px;padding:2px 6px;
+  justify-self:start}
