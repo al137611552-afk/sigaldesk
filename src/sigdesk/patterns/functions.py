@@ -18,7 +18,7 @@ from typing import Any
 
 from ..indicators.bars import ATR, KDJ
 from ..indicators.series import BOLL, EMA, MACD, RSI, SMA, StdDev
-from .context import EvalContext
+from .context import MAX_LOOKBACK, EvalContext
 from .values import Level, Quantity, Series, scalar
 
 
@@ -248,21 +248,47 @@ def _at(ctx: EvalContext, timeframe: object, expr: object) -> object:
 
 @register(
     "prev",
-    "上一根的值：prev(close)、prev(ema(close,20))；"
+    "回看 n 根前的值（默认 1）：prev(close)、prev(ema(close,20), 6)；"
     "对 swing_low/swing_high 则是**上一个摆动点**，双底/双顶靠它",
 )
-def _prev(ctx: EvalContext, x: object) -> float | None:
+def _prev(ctx: EvalContext, x: object, n: object = 1) -> float | None:
     """指标与字段本来就带 ``prev``（cross_up 内部一直在用），只是从没暴露给表达式。
 
     注意语义随来源而变：``prev(close)`` 是上一根 bar 的收盘价，
     而 ``prev(swing_low(5))`` 是**上一个已确认的摆动低点**（不是上一根）。
     双底要比的正是后者。
+
+    **``n`` 是为了判断均线朝向。** 单根差（``ema20 < prev(ema20)``）噪声极大：
+    实测 fu2611 曾以 0.031 个 ATR 的降幅被判成「空头趋势」，图上是一条平线。
+    ``ema(close,20) < prev(ema(close,20), 6)`` 才是「比 6 根之前低」——
+    仍然是**同一条均线跟它自己比**，只是把噪声平掉了。
+
+    两种"取不到"要分开处理，**不能都返回 None**：
+      - 历史还不够长（预热期）-> None，走三值逻辑，与指标预热一致（ADR-0006）
+      - n 超过历史缓冲上限     -> **抛错**。那是配置写错，静默变成"条件永不成立"
+        会让规则一条都不报且毫无提示 —— 这个项目栽在这类静默失效上太多次了。
     """
-    if isinstance(x, Quantity):
+    if not isinstance(x, Quantity):
+        raise TypeError(
+            f"prev() 只能用在带「上一根」的量上（bar 字段或指标函数的返回值），收到 {x!r}"
+        )
+    k = _int(n, "prev")
+    if k < 1:
+        raise ValueError(f"prev() 的回看根数必须 >= 1，收到 {k}")
+    if k > MAX_LOOKBACK:
+        raise ValueError(
+            f"prev() 的回看根数 {k} 超过历史缓冲上限 {MAX_LOOKBACK}；"
+            "要更远的回看请调大 patterns/context.py 的 MAX_LOOKBACK"
+        )
+    if k == 1:
         return x.prev
-    raise TypeError(
-        f"prev() 只能用在带「上一根」的量上（bar 字段或指标函数的返回值），收到 {x!r}"
-    )
+    hist = getattr(x, "values", None) or getattr(x, "history", None)
+    if not hist:
+        raise TypeError(f"prev(x, {k}) 需要 x 带历史值，{type(x).__name__} 没有")
+    if k >= len(hist):
+        return None      # 预热期：历史还不够长。与指标预热一致，走三值逻辑
+    got: float | None = hist[-(k + 1)]
+    return got
 
 
 @register("abs", "绝对值")

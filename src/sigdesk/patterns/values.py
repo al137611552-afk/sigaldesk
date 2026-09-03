@@ -30,10 +30,15 @@ class Quantity(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class Level:
-    """指标在当前 bar 与上一根 bar 上的值。预热期为 None。"""
+    """指标在当前 bar 与上一根 bar 上的值。预热期为 None。
+
+    ``history`` 是有界的近期取值（升序，末位 == ``cur``），供 ``prev(x, n)`` 回看多根。
+    默认空元组：不是所有 Quantity 都有历史（比如手工构造的），回看不到就报错不静默。
+    """
 
     cur: float | None
     prev: float | None = None
+    history: tuple[float | None, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

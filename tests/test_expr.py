@@ -338,3 +338,56 @@ def test_priming_a_long_history_is_fast(bars: list[Bar]) -> None:
         )
     elapsed = time.perf_counter() - t0
     assert elapsed < 5.0, f"求值 {len(long_series) // 10} 次耗时 {elapsed:.1f}s，复杂度可能退化了"
+
+
+# ---------------------------------------------------------------- prev(x, n)
+
+
+def test_prev_n_looks_back_n_bars_on_a_field(bars: list[Bar]) -> None:
+    """`prev(close, n)` 就是 n 根之前那根的收盘价 —— 拿原始 bar 对一遍。"""
+    ctx = ctx_at(bars, 60)
+    for n in (1, 2, 5, 20):
+        got = compile_expr(f"prev(close, {n})").value(ctx)
+        assert got == pytest.approx(bars[60 - 1 - n].close), f"n={n}"
+
+
+def test_prev_n_looks_back_on_an_indicator(bars: list[Bar]) -> None:
+    """指标也要能回看多根。用两个 as-of 上下文对拍：
+    在第 60 根上 `prev(ema, 6)` 应当等于在第 54 根上的 `ema` 当前值。
+    """
+    now = compile_expr("prev(ema(close, 20), 6)").value(ctx_at(bars, 60))
+    then = scalar(compile_expr("ema(close, 20)").value(ctx_at(bars, 54)))
+    assert now == pytest.approx(then)
+
+
+def test_prev_defaults_to_one_and_stays_backward_compatible(bars: list[Bar]) -> None:
+    ctx = ctx_at(bars, 40)
+    assert compile_expr("prev(close)").value(ctx) == compile_expr("prev(close, 1)").value(ctx)
+    assert (compile_expr("prev(ema(close, 20))").value(ctx)
+            == compile_expr("prev(ema(close, 20), 1)").value(ctx))
+
+
+def test_prev_n_returns_none_during_warmup(bars: list[Bar]) -> None:
+    """历史不够长是**预热**，返回 None 走三值逻辑（ADR-0006），不是报错。"""
+    assert compile_expr("prev(close, 30)").value(ctx_at(bars, 10)) is None
+
+
+def test_prev_n_beyond_the_buffer_raises_instead_of_silently_none(bars: list[Bar]) -> None:
+    """n 超过历史缓冲上限是**配置写错**，必须当场报错。
+
+    静默返回 None 会让条件永远不成立 —— 规则一条不报且毫无提示，
+    这个项目在这类静默失效上栽过太多次。
+    """
+    from sigdesk.patterns.context import MAX_LOOKBACK
+
+    expr = compile_expr(f"prev(ema(close, 20), {MAX_LOOKBACK + 1})")
+    with pytest.raises(ValueError, match="超过历史缓冲上限"):
+        expr.value(ctx_at(bars, 60))
+
+
+def test_prev_n_rejects_a_quantity_without_history() -> None:
+    """手工构造、没带历史的量，回看多根要报错而不是返回 None。"""
+    from sigdesk.patterns.functions import _prev
+
+    with pytest.raises(TypeError, match="需要 x 带历史值"):
+        _prev(None, Level(cur=1.0, prev=2.0), 5)  # type: ignore[arg-type]

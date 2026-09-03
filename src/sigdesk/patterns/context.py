@@ -13,6 +13,7 @@ ARCHITECTURE §4.1 要求指标 O(1) 增量更新、禁止每根 bar 全量重�
 from __future__ import annotations
 
 import bisect
+from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -37,14 +38,25 @@ class TimeframeSource(Protocol):
 FIELDS: tuple[str, ...] = ("open", "high", "low", "close", "volume", "money", "open_interest")
 
 
+# 指标历史的回看上限。给 prev(x, n) 用；n 超过它是配置错误，当场报错。
+MAX_LOOKBACK = 250
+
+
 @dataclass(slots=True)
 class _State:
-    """一个指标实例及其喂养进度。"""
+    """一个指标实例及其喂养进度。
+
+    ``history`` 是**有界**的近期取值（含当前），供 ``prev(x, n)`` 回看多根。
+    有界是关键：回测里一个标的能喂几十万根，无界就是把整条指标序列留在内存里。
+    上限取 MAX_LOOKBACK —— 比它更远的回看会报错，而不是悄悄返回 None
+    （静默降级会让规则永远不成立且毫无提示，这个项目已经踩过太多次）。
+    """
 
     indicator: Any
     last_ts: int
     cur: Any = None
     prev: Any = None
+    history: deque[Any] = field(default_factory=lambda: deque(maxlen=MAX_LOOKBACK + 1))
 
 
 @dataclass(slots=True)
@@ -75,6 +87,7 @@ class IndicatorCache:
         for value, ts in zip(samples[start:], stamps[start:], strict=True):
             state.prev = state.cur
             state.cur = state.indicator.update(value)
+            state.history.append(state.cur)
             state.last_ts = ts
         return state
 
@@ -127,7 +140,7 @@ class EvalContext:
         """标量型指标（SMA/EMA/RSI/...）的取值入口。"""
         state = self.cache.level((self.symbol, self.timeframe, *key), factory, src.values,
                                  self.stamps())
-        return Level(cur=state.cur, prev=state.prev)
+        return Level(cur=state.cur, prev=state.prev, history=tuple(state.history))
 
     def bar_level(
         self, key: tuple[Any, ...], factory: Callable[[], Any], pick: Callable[[Any], float | None]
@@ -135,7 +148,8 @@ class EvalContext:
         """需要 OHLC 的指标（ATR/KDJ）的取值入口：喂 Bar，用 ``pick`` 取出所需分量。"""
         state = self.cache.level((self.symbol, self.timeframe, *key), factory, self.bars,
                                  self.stamps())
-        return Level(cur=pick(state.cur), prev=pick(state.prev))
+        return Level(cur=pick(state.cur), prev=pick(state.prev),
+                     history=tuple(pick(v) for v in state.history))
 
 
 __all__ = ["FIELDS", "EvalContext", "IndicatorCache", "TimeframeSource"]
