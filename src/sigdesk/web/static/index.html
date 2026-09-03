@@ -18,6 +18,10 @@
         <button class="opt" data-alert="speech" type="button">播报</button>
         <button class="opt" data-alert="desktop" type="button">桌面通知</button>
       </div>
+      <!-- 快捷键的唯一可见入口（只留 `?` 键的话没人知道有快捷键）。
+           **放顶栏不放图表控件区**：它是全局功能，跟"提醒方式"同级，
+           而不是某张图的控件。原来挨着「九宫格」，既错位又把那个按钮挤到换行。 -->
+      <button id="keys-btn" class="opt" type="button" title="键盘快捷键（按 ?）">⌨</button>
       <span id="mode" class="badge">加载中…</span>
       <span id="flows" class="badge mono">—</span>
       <span id="clock" class="mono lbl">—</span>
@@ -48,8 +52,6 @@
           <div id="grid-mode" class="tf-group" hidden></div>
           <button id="grid-toggle" type="button"
             title="九宫格：同一标的的 9 个周期同屏">九宫格</button>
-          <!-- 快捷键的唯一可见入口。只留 `?` 键的话没人会知道有快捷键。 -->
-          <button id="keys-btn" type="button" title="键盘快捷键（?）">⌨</button>
         </div>
         <div id="wl-tabs" class="wl-tabs" hidden></div>
         <div id="chart"><div id="ma-legend" class="ma-legend"></div></div>

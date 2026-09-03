@@ -1073,18 +1073,35 @@ def test_pin_button_is_a_reachable_hit_target() -> None:
     assert size and min(size) >= 24, f"点击靶子太小：{size}（至少 24px）"
 
 
-def test_chart_head_buttons_do_not_wrap() -> None:
+def test_grid_toggle_does_not_wrap() -> None:
     """chart-head 是 flex 行，**不写 flex:none 就会被压到最小宽度**，
-    「九宫格」三个字竖着排成三行。加「⌨」之前它已经折成两行了，只是没人注意到。
+    「九宫格」三个字竖着排成三行（实测高 46px / 单行 15px）。
 
     同一个坑在 cell-head 上也踩过（那边靠 flex-wrap:nowrap 钉住）。
     """
     css = pathlib.Path("src/sigdesk/web/static/styles.css").read_text(encoding="utf-8")
-    for sel in ("#grid-toggle", "#keys-btn"):
-        block = css[css.index(sel + "{"):]
-        block = block[: block.index("}")]
-        assert "flex:none" in block, f"{sel} 会在窄头部里被压扁"
-    assert "white-space:nowrap" in css[css.index("#grid-toggle{"):][:120]
+    block = css[css.index("#grid-toggle{"):]
+    block = block[: block.index("}")]
+    assert "flex:none" in block, "#grid-toggle 会在窄头部里被压扁"
+    assert "white-space:nowrap" in block
+
+
+def test_shortcut_button_lives_in_the_header_not_the_chart_controls() -> None:
+    """**快捷键是全局功能，按钮该在顶栏**，跟「提醒方式」同级 ——
+    不是某张图的控件（用户反馈）。
+
+    它原来挨着「九宫格」，既是信息架构错位，又把那个按钮挤到了换行。
+    """
+    html = pathlib.Path("src/sigdesk/web/static/index.html").read_text(encoding="utf-8")
+    header = html[html.index("<header>"):html.index("</header>")]
+    assert 'id="keys-btn"' in header, "快捷键按钮应该在 <header> 里"
+
+    chart_head = html[html.index('class="chart-head"'):]
+    chart_head = chart_head[: chart_head.index("</div>")]
+    assert "keys-btn" not in chart_head, "别再把它放回图表控件区"
+
+    # 视觉上与顶栏其它按钮同组，不要自成一套
+    assert 'id="keys-btn" class="opt"' in html, "应复用顶栏按钮的 .opt 样式"
 
 
 def test_clock_shows_market_time_not_utc() -> None:

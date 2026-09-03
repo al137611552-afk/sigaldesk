@@ -45,6 +45,9 @@
   所以这个入口和快捷键本身是同一件事的两半。
 
 ### Fixed
+- **快捷键「⌨」按钮从图表控件区移到顶栏**。它是全局功能，跟「提醒方式」同级，
+  不是某张图的控件；放在「九宫格」旁边既是信息架构错位，也把那个按钮挤到过换行。
+  样式改为复用顶栏的 `.opt`，与相邻按钮同组。
 - **`os.kill(pid, 0)` 在 Windows 上会终止目标进程**（严重）。Python 的 `os.kill`
   在 Windows 上没有「信号 0 探测」：除 CTRL_C_EVENT/CTRL_BREAK_EVENT 外走的是
   `TerminateProcess()`。这是**生产路径** —— `watch.py` 启动时 `claim_writer` 会调它，

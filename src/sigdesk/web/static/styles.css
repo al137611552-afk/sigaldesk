@@ -74,11 +74,9 @@ input:focus,select:focus{outline:none;border-color:var(--accent)}
    不写就会被压到最小宽度，「九宫格」三个字竖着排成三行（实测高 46px / 单行 15px）。
    加「⌨」之前它就已经折成两行了，只是没人注意。 */
 #grid-toggle{flex:none;white-space:nowrap}
-/* 快捷键入口：只有一个字符，别让它占一个按钮那么宽 */
-#keys-btn{padding:3px 7px;border:1px solid var(--line);background:var(--panel);
-  color:var(--dim);border-radius:5px;font-size:12px;cursor:pointer;line-height:1.35;
-  font-family:inherit;flex:none}
-#keys-btn:hover{color:var(--fg);border-color:var(--accent)}
+/* 快捷键入口在顶栏，样式走 .opt（与「弹窗/声音/播报」同一组视觉）。
+   这里只微调两处：字符宽度和图标字号 —— 它只有一个字，不该占一个词那么宽。 */
+#keys-btn{padding:3px 8px;font-size:13px;line-height:1.15;font-family:inherit;flex:none}
 .tf.active{color:var(--fg);border-color:var(--accent)}
 #chart{flex:1;min-height:200px;position:relative}
 .chart-empty{position:absolute;inset:0;display:flex;align-items:center;
