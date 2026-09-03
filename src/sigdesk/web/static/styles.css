@@ -90,11 +90,16 @@ input:focus,select:focus{outline:none;border-color:var(--accent)}
 .chart-note{color:var(--dim);font-size:12px;padding:7px 14px;margin:0;flex:none}
 
 .rail{display:flex;flex-direction:column;min-height:0}
+/* **标题与计数一律 flex:none + nowrap**：右边的筛选框一多，这一行就撑爆，
+   「信号流」三个字会被压成竖排（加第三个下拉框时当场看到）。
+   同一个坑在 chart-head 的「九宫格」和 cell-head 上各踩过一次 —— 这是第三次。
+   筛选框允许换到第二行，比把标题挤没了强。 */
 .rail-head{display:flex;align-items:center;gap:8px;padding:9px 12px;
-  border-bottom:1px solid var(--line);flex:none}
-.rail-head b{font-size:13px}
-.rail-filters{display:flex;gap:6px;margin-left:auto}
-.rail-filters select{max-width:112px}
+  border-bottom:1px solid var(--line);flex:none;flex-wrap:wrap}
+.rail-head b{font-size:13px;flex:none;white-space:nowrap}
+.rail-head #sig-count{flex:none;white-space:nowrap}
+.rail-filters{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end}
+.rail-filters select{max-width:112px;min-width:0;flex:0 1 auto}
 .detail{border-bottom:1px solid var(--line);border-left:2px solid var(--accent);
   background:var(--panel-2);padding:11px 12px 12px;flex:none}
 .detail-top{display:flex;align-items:center;gap:8px}
@@ -125,10 +130,28 @@ input:focus,select:focus{outline:none;border-color:var(--accent)}
 .params{display:flex;align-items:center;gap:10px;padding:11px 16px;background:var(--panel-2);
   border-bottom:1px solid var(--line);flex-wrap:wrap;flex:none}
 .params > b{font-size:11px;font-weight:600;letter-spacing:.3px}
+/* **min-height 固定**：chip 里可能装数字框、下拉框、复选框、日期框，
+   四者的默认行高各不相同，不钉死的话同一行的 chip 会高矮不齐（用户一眼看出来）。 */
 .chip{display:flex;align-items:baseline;gap:6px;background:var(--panel);
-  border:1px solid var(--line);border-radius:6px;padding:3px 10px}
-.chip input{background:none;border:none;padding:0;width:56px;font-size:12px}
-.chip input[type=checkbox]{width:auto}
+  border:1px solid var(--line);border-radius:6px;padding:3px 10px;
+  min-height:26px;box-sizing:border-box}
+/* chip 自己带边框和底色，**里面的控件一律去掉自己那套** ——
+   不去的话就是盒中盒：高度比别的 chip 高一截、圆角套圆角（用户反馈）。
+   select 与 date 都走全局那条带边框的 `select,input,button` 样式，必须在这里覆盖。 */
+.chip input,.chip select{background:none;border:none;padding:0;font-size:12px;
+  color:var(--fg);font-family:inherit;border-radius:0;
+  /* **line-height 要显式写死**：input 与 select 的默认行高不同，
+     不写的话同在一行的 chip 会差 1px（用户一眼看出来了）。 */
+  line-height:1.4;height:auto}
+.chip input{width:56px}
+.chip input[type=checkbox],.chip select{width:auto}
+/* 日期框内容比数字宽，56px 会截断 */
+.chip input[type=date]{width:auto;min-width:104px}
+.chip select:hover,.chip input:focus,.chip select:focus{border-color:transparent;outline:none}
+/* 复选框没有基线，`align-items:baseline` 对它不起作用，于是那个 chip 比别的高 5px
+   （这个是本来就有的，加下拉框时一起量出来）。给它单独按居中对齐并清掉默认外边距。 */
+.chip:has(input[type=checkbox]){align-items:center}
+.chip input[type=checkbox]{margin:0;height:12px;width:12px}
 .stats-grid{display:grid;grid-template-columns:1fr 1fr;flex:1;min-height:0}
 .stats-col{padding:16px;display:flex;flex-direction:column;gap:15px;min-height:0;overflow-y:auto}
 .stats-col.left{border-right:1px solid var(--line)}
@@ -359,3 +382,7 @@ button.danger:hover{border-color:var(--down);color:var(--down)}
 .feed-more:hover:not(:disabled){color:var(--fg);border-color:var(--accent)}
 .feed-more:disabled{cursor:default;opacity:.6}
 .feed-end{text-align:center;padding:8px;font-size:10.5px}
+
+/* 信号流的日期筛选：与旁边的「全部规则/全部标的」下拉同一套尺寸 */
+#f-when-custom{margin-top:6px}
+#f-when-custom input[type=date]{flex:1;min-width:0;font-size:11px;padding:4px 6px}

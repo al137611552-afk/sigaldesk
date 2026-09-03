@@ -122,10 +122,33 @@ function filtered() {
 
    往回翻是**追加**而不是替换：翻到第三页时上面两页还要看得见，
    而且图上的标注也是按 S.signals 画的。 */
+/* 信号流的时间范围 -> (since, until) 的 UTC 秒；没选就是 (null, null)。
+
+   **日期按 CST 解释**（期货交易日就是 CST 的日历日），与图上时间戳同口径 ——
+   用浏览器本地时区解释的话，机器时区一变筛出来的就不一样了。 */
+function feedRange() {
+  const pick = $("#f-when").value || "0";
+  const dayStart = (iso) => Math.floor(Date.parse(iso + "T00:00:00Z") / 1000) - 8 * 3600;
+  if (pick === "custom") {
+    const a = $("#f-since").value, b = $("#f-until").value;
+    return [a ? dayStart(a) : null, b ? dayStart(b) + 86400 - 1 : null];
+  }
+  const days = Number(pick);
+  if (!days) return [null, null];
+  // "今天"= 当前 CST 日历日的 00:00 起；其余按整天往回推
+  const nowCst = Math.floor(Date.now() / 1000) + 8 * 3600;
+  const todayStart = Math.floor(nowCst / 86400) * 86400 - 8 * 3600;
+  return [todayStart - (days - 1) * 86400, null];
+}
+
 const FEED_PAGE = 500;
 
 async function loadSignalPage(offset) {
-  const d = await api(`/api/signals?limit=${FEED_PAGE}&offset=${offset}`);
+  const [since, until] = feedRange();
+  const q = new URLSearchParams({ limit: String(FEED_PAGE), offset: String(offset) });
+  if (since !== null) q.set("since", String(since));
+  if (until !== null) q.set("until", String(until));
+  const d = await api("/api/signals?" + q);
   S.sigTotal = d.total;
   S.hasOlder = d.has_older;
   S.loadedOffset = offset + d.signals.length;
@@ -2585,6 +2608,22 @@ async function boot() {
   };
   $("#grid-toggle").onclick = () => toggleGrid();
   $("#f-rule").onchange = $("#f-symbol").onchange = renderFeed;
+  {
+    // **换时间范围要从头拉**：offset 是相对该范围的，沿用旧的会错位。
+    const reload = async () => {
+      S.signals = [];
+      await loadSignalPage(0);
+      fillSymbolPicker();
+      fillRuleFilter();
+      renderFeed();
+    };
+    $("#f-when").onchange = () => {
+      $("#f-when-custom").hidden = $("#f-when").value !== "custom";
+      if ($("#f-when").value !== "custom") reload();
+    };
+    // 自定义：两个日期框任一变化就重拉（只填一个也有意义 —— 单边开区间）
+    $("#f-since").onchange = $("#f-until").onchange = reload;
+  }
   $("#stats-form").onsubmit = loadStats;
   {
     const sel = $('#stats-form [name="range"]');

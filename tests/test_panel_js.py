@@ -760,7 +760,7 @@ def test_feed_pages_backwards_from_the_newest() -> None:
     js = pathlib.Path("src/sigdesk/web/static/app.js").read_text(encoding="utf-8")
     fn = js[js.index("async function loadSignalPage("):]
     fn = fn[: fn.index("\n}\n")]
-    assert "offset=" in fn, "要带 offset 翻页"
+    assert "offset" in fn, "要带 offset 翻页"
     assert "dedup_key" in fn, "往回翻是追加，必须按 dedup_key 去重"
 
     feed = js[js.index("function renderFeed()"):]
@@ -1139,3 +1139,59 @@ def test_clock_shows_market_time_not_utc() -> None:
     tick = tick[: tick.index("\n  };")]
     assert "8 * 3600 * 1000" in tick, "时钟没有换算到 CST"
     assert "CST" in tick and "UTC" in tick, "要标出时区，并把 UTC 留在 title 里"
+
+
+def test_chip_controls_do_not_draw_their_own_box() -> None:
+    """`.chip` 自己带边框和底色，**里面的控件必须去掉自己那套**。
+
+    全局 `select,input,button,textarea` 那条给所有控件加了边框和 padding，
+    所以 chip 里放 `<select>` 或 `<input type=date>` 会变成盒中盒 ——
+    比旁边的 chip 高一截、圆角套圆角（用户反馈"区间的框大小和别的不一致"）。
+    原来只覆盖了 `input`，加下拉框时就露馅了。
+    """
+    css = pathlib.Path("src/sigdesk/web/static/styles.css").read_text(encoding="utf-8")
+    block = css[css.index(".chip input,.chip select{"):]
+    block = block[: block.index("}")]
+    for prop in ("background:none", "border:none", "padding:0"):
+        assert prop in block, f".chip 里的控件要去掉 {prop}"
+    assert ".chip select" in css, "select 也要被覆盖，不只是 input"
+    assert "input[type=date]" in css, "日期框比数字宽，56px 会截断"
+
+
+def test_feed_has_a_time_filter_that_goes_to_the_server() -> None:
+    """信号流的时间筛选要**走服务端**，不能只筛已加载的那批 ——
+    否则想看两个月前的还得先一页页翻回去，等于没有筛选。"""
+    js = APP.read_text(encoding="utf-8")
+    html = pathlib.Path("src/sigdesk/web/static/index.html").read_text(encoding="utf-8")
+    assert 'id="f-when"' in html, "信号流筛选行要有时间下拉"
+
+    fn = js[js.index("async function loadSignalPage("):]
+    fn = fn[: fn.index("\n}\n")]
+    assert "feedRange()" in fn and "since" in fn, "取数时要把时间范围带给服务端"
+
+
+def test_panel_titles_never_get_squeezed_into_a_column() -> None:
+    """**这个坑踩过三次**：chart-head 的「九宫格」、cell-head、rail-head 的「信号流」。
+
+    都是同一个成因：flex 行里右边的控件一多，左边的标题被压到最小宽度，
+    中文标题就变成一个字一行的竖排。防法固定 —— 标题 `flex:none` + `nowrap`，
+    让**控件换行**而不是让标题被压扁。
+    """
+    css = pathlib.Path("src/sigdesk/web/static/styles.css").read_text(encoding="utf-8")
+    for sel, why in ((".rail-head b", "信号流"), ("#grid-toggle", "九宫格")):
+        block = css[css.index(sel + "{"):]
+        block = block[: block.index("}")]
+        assert "flex:none" in block, f"{why} 会被压扁"
+        assert "white-space:nowrap" in block, f"{why} 会换行"
+    # cell-head 走的是整行 nowrap，写法不同但同一个目的
+    cell = css[css.index(".cell-head{"):]
+    assert "flex-wrap:nowrap" in cell[: cell.index("}")]
+
+
+def test_chips_have_a_pinned_height() -> None:
+    """chip 里装数字框/下拉框/复选框/日期框，四者默认行高各不相同。
+    不钉死 min-height 的话同一行的 chip 高矮不齐（实测极差曾达 29.5px）。"""
+    css = pathlib.Path("src/sigdesk/web/static/styles.css").read_text(encoding="utf-8")
+    block = css[css.index(".chip{"):]
+    block = block[: block.index("}")]
+    assert "min-height" in block and "box-sizing:border-box" in block
