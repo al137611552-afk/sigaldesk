@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from ..core.models import Bar
+from ..indicators.bars import ATR
 from .context import EvalContext
 from .functions import num_arg, register
 from .values import Level, PriceRange, Series, scalar
@@ -189,6 +190,41 @@ def _consolidation(ctx: EvalContext, n: object, max_width: object = 0.02) -> boo
     if mid == 0:
         return None
     return (hi - lo) / mid <= num_arg(max_width, "consolidation", 0.02)
+
+
+@register(
+    "range_atr",
+    "最近 n 根的振幅是几倍 ATR：range_atr(20) < 3.83 —— 判横盘用它，别用固定百分比",
+)
+def _range_atr(ctx: EvalContext, n: object, atr_n: object = 14) -> float | None:
+    """最近 n 根（**含当前根**）的高低振幅 ÷ ATR，返回倍数。
+
+    **为什么要有它。** `consolidation(n, 0.008)` 比的是固定百分比，
+    而各品种波动率差着好几倍 —— 实测同一段"5 小时振幅"：
+    铜 0.81%、股指 1.89%（差 2.3 倍）。于是 `consolidation(20, 0.008)` 在铜上
+    49.8% 的时间成立、在股指上只有 **0.3%** —— 各品种命中率极差 **170 倍**。
+    规则声称覆盖全品种，实际对高波动品种事实上不生效（用户在 UR701 上踩到，0/123）。
+
+    换成 ATR 归一后，同一段振幅是 4.3~5.2 倍 ATR（离散度从 2.3 倍降到 1.2 倍），
+    命中率极差从 170 倍降到 2.7 倍。这与本项目其余阈值的口径一致
+    （kdzx 的注释里写着为什么阈值一律 ATR 归一）。
+
+    **含当前根**：判"现在是不是在横盘"要把当前根算进去；
+    `range()` 不含当前根是因为它给 breakout 用（含了就恒为假），用途不同。
+
+    ATR 预热未完成时返回 None，走三值逻辑（ADR-0006）。
+    """
+    count = _n(n, "range_atr")
+    if len(ctx.bars) < count:
+        return None
+    window = ctx.bars[-count:]
+    hi, lo = max(b.high for b in window), min(b.low for b in window)
+    w = _n(atr_n, "range_atr")
+    raw = scalar(ctx.bar_level(("atr", w), lambda: ATR(w), lambda v: v))
+    # scalar() 的返回可能是 str/bool（表达式里什么都能塞），这里只接受数
+    if not isinstance(raw, (int, float)) or isinstance(raw, bool) or raw <= 0:
+        return None
+    return (hi - lo) / float(raw)
 
 
 @register("inside_bar", "内包线：本根高低完全落在上一根之内")

@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import pathlib
 from typing import Any
 
 import pytest
@@ -393,3 +394,57 @@ def test_double_star_unpacking_is_refused() -> None:
     """`f(**d)` 的 keyword.arg 是 None，求值器会把它静默丢掉 —— 参数凭空消失。"""
     with pytest.raises(ExprError, match="展开传参"):
         compile_expr("sma(**close)")
+
+
+# ---------------------------------------------------------------- range_atr
+
+
+def _walk(n: int, price: float, step: float, wobble: float) -> tuple[Bar, ...]:
+    """造一段每根涨跌 ±wobble、整体每根漂移 step 的序列。价格水平由 price 决定。"""
+    out = []
+    for i in range(n):
+        c = price + i * step
+        out.append((c, c + wobble, c - wobble, c))
+    return mk(*out)
+
+
+def test_range_atr_is_a_multiple_not_a_percentage() -> None:
+    """`range_atr(n)` 返回的是**倍数**，可以直接和阈值比大小。"""
+    bars = _walk(60, 100.0, 0.0, 1.0)
+    v = compile_expr("range_atr(20)").value(ctx(bars))
+    assert isinstance(v, float) and v > 0
+
+
+def test_range_atr_is_scale_free_across_price_levels() -> None:
+    """**这是这个原语存在的全部理由**：同样的形态，价格水平不同，结果必须一样。
+
+    `consolidation(n, 0.008)` 比的是固定百分比，于是各品种命中率差 170 倍
+    （实测：铜 49.8%、股指 0.3%）—— 规则声称覆盖全品种，实际对高波动品种不生效。
+    """
+    a = compile_expr("range_atr(20)").value(ctx(_walk(60, 100.0, 0.0, 1.0)))
+    b = compile_expr("range_atr(20)").value(ctx(_walk(60, 10000.0, 0.0, 100.0)))
+    assert a is not None and b is not None
+    assert abs(a - b) < 1e-9, "同一形态放大 100 倍价格后结果变了 —— 那就不是尺度无关"
+
+
+def test_range_atr_grows_when_the_range_widens_relative_to_atr() -> None:
+    """振幅相对 ATR 变宽，倍数就要变大 —— 否则它区分不了横盘和趋势。"""
+    quiet = compile_expr("range_atr(20)").value(ctx(_walk(60, 100.0, 0.0, 1.0)))
+    trend = compile_expr("range_atr(20)").value(ctx(_walk(60, 100.0, 0.5, 1.0)))
+    assert quiet is not None and trend is not None
+    assert trend > quiet, "单边走的那段应当有更大的振幅/ATR"
+
+
+def test_range_atr_includes_the_current_bar_unlike_range() -> None:
+    """判「现在是不是在横盘」要把当前根算进去；`range()` 不含当前根是因为
+    它给 breakout 用（含了就恒为假）—— 两者用途不同，别混。"""
+    src = pathlib.Path("src/sigdesk/patterns/primitives.py").read_text(encoding="utf-8")
+    fn = src[src.index("def _range_atr("):]
+    fn = fn[: fn.index("\n\n\n@register")]
+    assert "ctx.bars[-count:]" in fn, "range_atr 要含当前根"
+    assert "含当前根" in fn, "这个区别必须写在注释里，否则下次会被'统一'掉"
+
+
+def test_range_atr_returns_none_during_warmup() -> None:
+    """ATR 没预热完就返回 None，走三值逻辑（ADR-0006），不是返回 0。"""
+    assert compile_expr("range_atr(20)").value(ctx(_walk(5, 100.0, 0.0, 1.0))) is None
