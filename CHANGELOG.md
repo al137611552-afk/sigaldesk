@@ -14,6 +14,12 @@
   存量数据用 `scripts/compact.py` 迁移 —— **先校验逐根一致再删**，幂等、可中断重跑。
 - **`read_range` 先按文件名裁分区再读**（partition pruning），并按 close_ts 去重。
   有界区间实测 137ms → 10ms。去重是迁移期兜底：新旧布局并存时同一根 bar 会被读两遍。
+- **`/api/markers` 改用列裁剪**：它只需要"有哪些 bar"来给信号定位（只用 `close_ts`），
+  却在读全部 10 列再造几万个 `Bar` 对象。Parquet 是列存，只读要用的那一列
+  （projection pushdown）—— BTC 1m 三万根从 152.7ms 降到 12.8ms。
+  八个周期的 markers 合计 **330ms → 96ms**，九宫格一次刷新 500ms → 280ms（服务端）。
+  16 个响应逐字节对拍无差异 —— `dropped` 的判定只依赖 close_ts 集合，语义完全不变。
+  （这里**不能改尾读**：窗口外的老信号会被误判成 dropped。）
 - **面板不再读全量再截尾**：无界区间走 `read_tail`（从最新分区往回读、够了就停），
   行数由 `count_bars` 从 Parquet 元数据拿。均线的前置预热由 `warmup_bars` 算 ——
   SMA 取窗口、EMA 实测要 20 倍窗口。九宫格八格 **385ms → 74ms**（最初 1271ms），

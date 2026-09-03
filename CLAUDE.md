@@ -166,6 +166,10 @@ ruff check src tests scripts && mypy src
   去重是迁移期的兜底（新旧布局并存时同一根 bar 会被读两遍，且完全看不出来）。
   裁剪必须**保守**（两边各留一天余量：分区键是交易日，与 close_ts 的 UTC 日期能差一天）——
   裁猛了就是静默少一段数据。`test_pruning_never_changes_the_result` 拿"不裁剪"的结果逐根对拍。
+- **只要某几列就用 `read_close_ts` 这类列裁剪读，别走 `read_range`。**
+  Parquet 是列存；`/api/markers` 只用 `close_ts`，却读全部 10 列再造几万个 Bar 对象
+  （三万根 152.7ms vs 12.8ms，12 倍）。**别对 markers 用尾读** ——
+  窗口外的老信号会被误判成 dropped；列裁剪才是语义不变的那条路。
 - **裁剪只对有界区间有用**（面板发的是 `start_ts=0` 无界区间）。所以无界那条路
   走 **`read_tail`**：从最新分区往回读、够了就停；行数用 `count_bars` 从元数据拿。
   1m 由 3 万根降到 `limit + 预热`，实测 226ms → 12ms。

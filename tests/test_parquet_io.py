@@ -283,3 +283,44 @@ def test_count_bars_matches_without_reading_rows(tmp_path: pathlib.Path) -> None
     fn = src[src.index("def count_bars("):]
     fn = fn[: fn.index("\n\n\ndef ")]
     assert "read_bars" not in fn, "算行数不该读行数据"
+
+
+def test_read_close_ts_matches_read_range_but_reads_one_column(
+    tmp_path: pathlib.Path,
+) -> None:
+    """列裁剪只是少读列，**给出的 close_ts 必须与全量读逐个相同**。
+
+    Parquet 是列存，只读要用的那一列是它的看家本领（projection pushdown）。
+    /api/markers 只需要"有哪些 bar"，却一直读全部 10 列再造几万个 Bar 对象。
+    """
+    from sigdesk.store.parquet_io import read_close_ts, read_range
+
+    root = tmp_path / "bars"
+    uid = "CN.SHFE.rb2610"
+    for tf, step in ((Timeframe.M5, 300), (Timeframe.D1, 86_400)):
+        _seed(root, uid, tf, 300, step)
+        full = [b.close_ts for b in read_range(root, uid, tf, 0, 2**31)]
+        assert read_close_ts(root, uid, tf) == full, f"{tf.value} 列裁剪后结果变了"
+    assert read_close_ts(root, "CN.SHFE.nope", Timeframe.M5) == []
+
+    src = pathlib.Path("src/sigdesk/store/parquet_io.py").read_text(encoding="utf-8")
+    fn = src[src.index("def read_close_ts("):]
+    fn = fn[: fn.index("\n\n\ndef ")]
+    assert 'columns=["close_ts"]' in fn, "没有真的做列裁剪"
+    assert "read_bars" not in fn, "又去造 Bar 对象了，等于没裁"
+
+
+def test_read_close_ts_dedupes_across_layouts(tmp_path: pathlib.Path) -> None:
+    """迁移期新旧布局并存时同一根 bar 会出现两次，去重要和 read_range 一致。"""
+    import pyarrow.parquet as pq
+
+    from sigdesk.store.parquet_io import read_close_ts
+
+    root = tmp_path / "bars"
+    uid = "CN.SHFE.rb2610"
+    bars = _seed(root, uid, Timeframe.D1, 5, 86_400)
+    d = root / "CN" / uid / "1d"
+    tbl = pq.read_table(d / "2026.parquet")
+    for i, b in enumerate(bars):
+        pq.write_table(tbl.slice(i, 1), d / f"{b.trading_day}.parquet", compression="zstd")
+    assert read_close_ts(root, uid, Timeframe.D1) == sorted(b.close_ts for b in bars)

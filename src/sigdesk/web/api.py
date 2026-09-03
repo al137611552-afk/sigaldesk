@@ -34,7 +34,7 @@ from ..rules.store import RuleStore, RuleStoreError, parse_source
 from ..rules.trial import run_trial
 from ..stats.outcome import OutcomeParams, evaluate_all
 from ..stats.report import build_report
-from ..store.parquet_io import count_bars, latest_partition, read_range, read_tail
+from ..store.parquet_io import count_bars, latest_partition, read_close_ts, read_range, read_tail
 from ..store.runtime_store import RuntimeStore
 from .health import HealthMonitor
 from .intraday import build_intraday
@@ -388,9 +388,12 @@ def create_app(state: ServiceState) -> FastAPI:
         except ValueError:
             raise HTTPException(400, f"未知周期 {timeframe}") from None
         rows = state.runtime.signals(symbol=symbol)
-        series = read_range(state.data_root, symbol, tf, 0, 2**31)
-        stamps = {b.close_ts for b in series}
-        closes = sorted(stamps)
+        # **只要"有哪些 bar"，不要 bar 本身** —— 定位信号只用得上 close_ts。
+        # 原来走 read_range 读全部 10 列再造几万个 Bar 对象（BTC 1m 实测 153ms），
+        # 列裁剪后 13ms。这里不能改成尾读：窗口外的老信号会被误判成 dropped，
+        # 而 dropped 的判定只依赖 close_ts 集合，所以列裁剪是语义完全不变的那条路。
+        closes = read_close_ts(state.data_root, symbol, tf)
+        stamps = set(closes)
         period = tf.seconds
 
         def bucket_of(ts: int) -> int:

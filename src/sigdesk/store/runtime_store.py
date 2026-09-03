@@ -19,9 +19,9 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import pathlib
 import sqlite3
+import sys
 import threading
 from collections.abc import Iterable, Sequence
 from types import TracebackType
