@@ -1320,3 +1320,45 @@ def test_zooming_a_watchlist_cell_adopts_its_symbol() -> None:
     assert "G.wcells.get(next)" in fn, "要取被放大那格的标的"
     assert "S.symbol = cell.symbol" in fn, "要设成当前标的"
     assert 'sel.value = cell.symbol' in fn, "下拉框也要跟上"
+
+
+def test_crosshair_syncs_only_across_timeframes_not_across_symbols() -> None:
+    """**单标的多周期联动有意义，九个不同品种联动没有意义。**
+
+    九周期：同一标的，看同一时刻在各级别上分别落在哪根 bar 上 —— 这就是"看大做小"。
+    预警组：九个不同品种，动一格带着另外八格跑只是晃眼（用户两次指出）。
+
+    `makeCell` 两种模式共用，联动是预警组**继承来的**，从没单独做过决定。
+    """
+    js = APP.read_text(encoding="utf-8")
+    fn = js[js.index("function crosshairSyncs()"):]
+    fn = fn[: fn.index("\n}\n")]
+    assert 'G.mode === "tf"' in fn, "只有九周期模式才联动"
+
+    hover = js[js.index("  chart.subscribeCrosshairMove((param) => {"):]
+    hover = hover[: hover.index("});")]
+    assert "crosshairSyncs()" in hover, "悬停广播前要判模式"
+    assert hover.index("paintCellHover") < hover.index("crosshairSyncs()"), (
+        "自己的读数要先更新 —— 不联动的模式里它是唯一的反馈"
+    )
+
+
+def test_top_readout_is_per_mode() -> None:
+    """顶部读数要**按模式给**：
+
+    - 单图 / 九周期：同一个标的，读数有意义（九周期取 1m 那格的最新一根）；
+    - 预警组：九格九个品种，一个读数说不清是谁的 —— 清空。
+
+    上一版我在预警组那条路径里一律清空、又没人恢复，**把九周期那份也清没了**
+    （当时还误判成"本来就是空的"，其实改之前那里显示的是单图留下的陈旧数据）。
+    """
+    js = APP.read_text(encoding="utf-8")
+    title = js[js.index("function setChartTitle()"):]
+    title = title[: title.index("\n}\n")]
+    watch = title[title.index('G.mode === "watch"'):]
+    assert '$("#ohlc").innerHTML = ""' in watch, "预警组要清空"
+
+    grid = js[js.index("async function loadGrid()"):]
+    grid = grid[: grid.index("\n}\n")]
+    assert "renderOhlc(" in grid, "九周期要把顶部读数写成真的当前值"
+    assert 'c.tf === "1m"' in grid, "取 1m 那格 —— 最接近'现在'"

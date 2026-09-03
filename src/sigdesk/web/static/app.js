@@ -410,8 +410,9 @@ function setChartTitle() {
   if (G.mode === "watch") {
     const m = (G.wl?.markets || []).find((x) => x.key === G.market);
     el.textContent = `${m ? m.label : ""}预警组 · ${G.wtf}`;
-    // **顶部读数在这里没有意义**：九格是九个品种，一个 OHLC/成交量说不清是谁的
-    // （用户报的）。每格自己的头部已经有读数，且跟着十字线走。
+    // **只有预警组该清掉**：九格是九个品种，一个 OHLC/成交量说不清是谁的。
+    // 九周期是同一个标的，顶部读数有用 —— 由 loadGrid 写成真的当前值
+    // （上一版我在这里一律清空，把九周期那份也清没了）。
     $("#ohlc").innerHTML = "";
   } else {
     el.textContent = `${shortSym(S.symbol)} · 九周期`;
@@ -1615,6 +1616,17 @@ const G = {
   syncing: false,   // **防回环**：程序设置十字线会再次触发 crosshairMove 回调
 };
 
+/* 十字线**只在"同一标的的九个周期"里联动**。
+
+   预警组是九个**不同品种**，动一格带着另外八格跑是噪声：你正在看的是其中一个，
+   另外八条线只会晃眼（用户两次指出）。九周期那边联动才是"看大做小"要的东西 ——
+   同一时刻在各级别上分别落在哪根 bar 上。
+
+   `makeCell` 两种模式共用，联动是预警组**继承来的**，从没单独做过决定。 */
+function crosshairSyncs() {
+  return G.on && G.mode === "tf";
+}
+
 /* 已读状态存本地：它是"我这个人看没看过"，不是账本上的事实，
    没必要占服务端一张表；换台机器重新标一遍也无所谓。 */
 const SEEN_KEY = "sigdesk.watchlist.seen";
@@ -1701,6 +1713,7 @@ function makeCell(map, key, tf, headHtml) {
     // **读数总是更新**，哪怕这一格是被同步过来的 —— 否则同步来的十字线
     // 只是一条线，旁边的数字还停在"最新"，看着比不同步更糊涂。
     paintCellHover(cell, param);
+    if (!crosshairSyncs()) return;      // 预警组不联动，见 crosshairSyncs 的注释
     if (G.syncing) return;              // 防回环：下面的 setCrosshairPosition 会再触发本回调
     if (G.pinned !== null) return;      // 已锁定就别被鼠标带跑
     syncCrosshair(param.time ?? null, key);
@@ -1709,6 +1722,7 @@ function makeCell(map, key, tf, headHtml) {
   // 不用普通单击：普通单击要留给"随便点点不触发任何东西"。
   root.addEventListener("click", (ev) => {
     if (!ev.shiftKey) return;
+    if (!crosshairSyncs()) return;      // 不联动的模式里"锁定该时刻"没有意义
     ev.preventDefault();
     G.pinned = G.pinned === null ? (G.lastHover ?? null) : null;
     if (G.pinned === null) syncCrosshair(null, null);
@@ -2002,6 +2016,11 @@ async function loadGrid() {
     console.error(c.tf, e);
   })));
   requestAnimationFrame(() => cells.forEach(fitCell));
+  // 九周期是**同一个标的**，所以顶部读数有意义：给它这个标的的最新一根。
+  // 取最小的墙钟周期（1m 最接近"现在"）；分时不算，它是当日折线不是 bar 序列。
+  const src = cells.find((c) => c.tf === "1m" && c.bars?.length)
+    || cells.find((c) => c.tf !== INTRADAY && c.bars?.length);
+  renderOhlc(src ? src.bars.at(-1) : null);
 }
 
 /* ── 键盘快捷键 ──────────────────────────────────
