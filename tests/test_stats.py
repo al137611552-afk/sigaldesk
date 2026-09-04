@@ -479,8 +479,8 @@ def test_random_baseline_uses_the_same_exit_convention_as_the_rule() -> None:
     bars = [bar(60 * i, 100.0 + i * 0.1, 100.6 + i * 0.1, 99.4 + i * 0.1, 100.2 + i * 0.1)
             for i in range(1, 201)]
 
-    exp_atr, n = random_entry_expectation(bars, Direction.LONG, OutcomeParams(), stride=10)
-    exp_pct, _ = random_entry_expectation(
+    exp_atr, n, _ = random_entry_expectation(bars, Direction.LONG, OutcomeParams(), stride=10)
+    exp_pct, _, _ = random_entry_expectation(
         bars, Direction.LONG, OutcomeParams(atr_key=None), stride=10)
     assert n > 0
 

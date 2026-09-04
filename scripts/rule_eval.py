@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import pathlib
 import sys
 
@@ -33,6 +34,7 @@ from sigdesk.rules.model import Rule  # noqa: E402
 from sigdesk.rules.trial import run_trial  # noqa: E402
 from sigdesk.stats.baseline import (  # noqa: E402
     effective_n,
+    excess_se,
     random_entry_expectation,
     standard_error,
 )
@@ -74,11 +76,16 @@ def evaluate_rule(
         counts[s.symbol] = counts.get(s.symbol, 0) + 1
 
     total = sum(counts.values())
-    base, parts = 0.0, []
+    base, parts, base_var = 0.0, [], 0.0
     for uid, n in sorted(counts.items()):
         trig_bars = aggregate(uid, series_1m[uid], trig_tf)
-        exp, k = random_entry_expectation(trig_bars, rule.emit.direction, params, stride)
-        base += exp * n / total if total else 0.0
+        exp, k, se_uid = random_entry_expectation(
+            trig_bars, rule.emit.direction, params, stride)
+        w = n / total if total else 0.0
+        base += exp * w
+        # 加权和的方差 = Σ wᵢ²·varᵢ。基准也是估计量，它的不确定性必须进区间。
+        if not math.isnan(se_uid):
+            base_var += (w * se_uid) ** 2
         parts.append((uid, n, exp, k))
 
     # **必须给标准误**：几十条信号时，"超额 +0.02% vs -0.04%" 可能全在噪声里。
@@ -88,12 +95,16 @@ def evaluate_rule(
     # 这里原来自己算了一遍 `stdev/sqrt(n)`，于是修了库里那份、CLI 还在报旧值 ——
     # 同一个量两处各写一套，迟早分家。
     rets = [o.ret for o in res.outcomes if o.reason is not ExitReason.NO_DATA]
-    se = standard_error(res.outcomes)
+    se_rule = standard_error(res.outcomes)
+    # **区间画在超额上，所以标准误也得是超额的** —— 合成用库里那一份 excess_se，
+    # 别在这里再写一遍 math.hypot（本文件上一次就是这么分家的）。
+    se = excess_se(se_rule, math.sqrt(base_var))
     n_eff = effective_n(res.outcomes)
 
     return {"signals": total, "gross": st.avg_return, "win": st.win_rate,
             "base": base, "excess": st.avg_return - base, "parts": parts,
-            "se": se, "n_eval": len(rets), "n_eff": n_eff,
+            "se": se, "se_rule": se_rule, "se_base": math.sqrt(base_var),
+            "n_eval": len(rets), "n_eff": n_eff,
             "scanned": res.symbols_scanned, "trig_tf": trig_tf}
 
 
@@ -155,7 +166,8 @@ def main() -> int:
         lo, hi = r["excess"] - 2 * r["se"], r["excess"] + 2 * r["se"]
         verdict = "跨零 —— 这份样本分辨不出" if lo < 0 < hi else (
             "**不跨零**" + ("（显著为正）" if lo > 0 else "（显著为负）"))
-        print(f"        标准误 ±{r['se'] * 100:.4f}%"
+        print(f"        超额标准误 ±{r['se'] * 100:.4f}%"
+              f"（规则 ±{r['se_rule'] * 100:.4f}% ⊕ 基准 ±{r['se_base'] * 100:.4f}%）"
               f"（n={r['n_eval']}，按持仓重叠折算后有效 n={r['n_eff']:.0f}）"
               f"　→ **超额**的 95% 区间约 {lo * 100:+.4f}% ~ {hi * 100:+.4f}%"
               f"　{verdict}")

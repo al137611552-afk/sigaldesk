@@ -40,10 +40,19 @@ DEFAULT_STRIDE = 10
 def random_entry_expectation(
     bars: Sequence[Bar], direction: Direction | str, params: OutcomeParams,
     stride: int = DEFAULT_STRIDE,
-) -> tuple[float, int]:
-    """在抽样到的每一根 bar 上开一笔同方向的单，返回 (平均收益, 样本数)。"""
+) -> tuple[float, int, float]:
+    """在抽样到的每一根 bar 上开一笔同方向的单。
+
+    返回 ``(平均收益, 样本数, 该均值自身的标准误)``。
+
+    **标准误必须一起返回。** 超额 = 规则期望 − 基准，两边都是估计量，
+    区间原来只算了规则那一半、把基准当成精确已知 —— 实测漏掉的那一半会让
+    区间偏窄约 11%，而我们正卡在"贴零"上做判断。
+    基准的有效 n 同样要按持仓重叠折算（随机进场彼此重叠得更厉害：
+    步长 10 根 × 5m = 50 分钟，持有 100 分钟，每笔和邻居叠一半）。
+    """
     if not bars:
-        return 0.0, 0
+        return 0.0, 0, float("nan")
     # **每根假信号都要带上 params.atr_key 那个值。** 不带的话 risk_distances 会
     # 静默回落到百分比止损，而规则的信号走的是 ATR 倍数 —— 于是"超额"里混进了
     # **止损宽度差**，不再只是选时。这正是本文件开头宣称"同一套出场口径"要排除的
@@ -69,9 +78,10 @@ def random_entry_expectation(
         for i, j in enumerate(picked_idx)
     ]
     if not fake:
-        return 0.0, 0
-    st = summarize(evaluate_all(fake, {bars[0].symbol: list(bars)}, params))
-    return st.avg_return, st.evaluated
+        return 0.0, 0, float("nan")
+    outs = evaluate_all(fake, {bars[0].symbol: list(bars)}, params)
+    st = summarize(outs)
+    return st.avg_return, st.evaluated, standard_error(outs)
 
 
 def effective_n(outcomes: Sequence[Outcome]) -> float:
@@ -127,7 +137,11 @@ class Baseline:
     avg_return: float = 0.0          # 按信号分布加权后的随机进场期望
     excess: float = 0.0              # 规则期望 − 基准
     samples: int = 0                 # 参与估计的随机进场笔数
-    se: float = float("nan")         # 规则期望的标准误
+    # **se 是「超额」的标准误**（规则那一半与基准那一半合成），不是规则期望的。
+    # 面板和 CLI 都拿它画区间，而区间是画在超额上的。
+    se: float = float("nan")
+    se_rule: float = float("nan")    # 其中规则期望那一半
+    se_base: float = float("nan")    # 其中基准那一半（原来整个被漏掉了）
     by_symbol: dict[str, float] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
@@ -136,8 +150,24 @@ class Baseline:
             "excess": self.excess,
             "samples": self.samples,
             "se": None if math.isnan(self.se) else self.se,
+            "se_rule": None if math.isnan(self.se_rule) else self.se_rule,
+            "se_base": None if math.isnan(self.se_base) else self.se_base,
             "by_symbol": dict(self.by_symbol),
         }
+
+
+def excess_se(se_rule: float, se_base: float) -> float:
+    """超额的标准误：``√(规则² + 基准²)``。**全仓只有这一份定义。**
+
+    两边都是估计量。原来的区间只算了规则那一半、把基准当成精确已知，
+    实测偏窄约 11% —— 而判断经常卡在"贴零"上，11% 正好是会翻结论的量级。
+
+    **这是保守估计**：规则的信号本来就是随机进场样本的子集，两者正相关，
+    差值的真实标准误比独立假设下的小。宁可偏宽，不要把噪声报成发现。
+    """
+    if math.isnan(se_rule):
+        return se_rule
+    return math.hypot(se_rule, 0.0 if math.isnan(se_base) else se_base)
 
 
 def weighted_baseline(
@@ -166,20 +196,29 @@ def weighted_baseline(
 
     total = sum(counts.values())
     base, samples, per_symbol = 0.0, 0, {}
+    base_var = 0.0
     for uid, n in counts.items():
         bars = bars_by_symbol.get(uid) or []
         if not bars:
             continue
         direction = max(dirs[uid].items(), key=lambda kv: kv[1])[0]
-        exp, k = random_entry_expectation(bars, direction, params, stride)
+        exp, k, se_uid = random_entry_expectation(bars, direction, params, stride)
         per_symbol[uid] = exp
-        base += exp * n / total
+        w = n / total
+        base += exp * w
+        # 加权和的方差 = Σ wᵢ²·varᵢ（各标的的基准彼此独立地估计）
+        if not math.isnan(se_uid):
+            base_var += (w * se_uid) ** 2
         samples += k
 
     rule_exp = summarize(usable).avg_return
+    se_rule = standard_error(usable)
+    # 超额的标准误 = √(规则² + 基准²)。**保守**：规则的信号本来就是随机进场样本
+    # 的子集，两者正相关，真实的差值标准误比这个小。宁可偏宽。
+    se_excess = excess_se(se_rule, math.sqrt(base_var))
     return Baseline(
         avg_return=base, excess=rule_exp - base, samples=samples,
-        se=standard_error(usable), by_symbol=per_symbol,
+        se=se_excess, se_rule=se_rule, se_base=math.sqrt(base_var), by_symbol=per_symbol,
     )
 
 
@@ -220,5 +259,5 @@ def horizon_curve(
 
 __all__ = [
     "CURVE_STRIDE", "HORIZON_LADDER", "Baseline", "effective_n", "horizon_curve",
-    "random_entry_expectation", "standard_error", "weighted_baseline",
+    "excess_se", "random_entry_expectation", "standard_error", "weighted_baseline",
 ]
