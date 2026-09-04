@@ -254,9 +254,18 @@ if (process.env.SMOKE_FIX) Object.assign(FIX, JSON.parse(process.env.SMOKE_FIX))
 
 const nodes = new Map();
 const asked = new Set();
+/* index.html 里默认带 class 的元素，桩要照着建模 —— 少一个事实，
+   那条路径就没被测到（`#view-live` 少了 `active`，于是"信号到达要刷当前视图"
+   被守卫挡住，冒烟里看着像没刷）。 */
+const PRESET_CLASSES = { "#view-live": ["view", "active"] };
+
 const get = (sel) => {
   asked.add(sel);
-  if (!nodes.has(sel)) nodes.set(sel, el());
+  if (!nodes.has(sel)) {
+    const node = el();
+    for (const c of PRESET_CLASSES[sel] || []) node.classList.add(c);
+    nodes.set(sel, node);
+  }
   return nodes.get(sel);
 };
 
@@ -358,6 +367,8 @@ const sandbox = {
     },
     clearCrosshairPosition() { (sandbox.__xhairClear ||= []).push(1); },
     timeScale: () => ({ setVisibleLogicalRange() {}, fitContent() {},
+      // keepView 要靠它保住可视区间；桩里少这一个方法，refreshMarket 就整条路径抛错
+      getVisibleLogicalRange: () => ({ from: 0, to: 100 }),
       // 每分钟一格、20px 宽，起点是夹具第一根 bar —— 确定、单调，便于逐点断言
       timeToCoordinate: (t) => (t - 1788139800) / 60 * 20 }) }) },
   // 写端点也走这里：send() 会带 method/body，桩只按路径取夹具
@@ -502,6 +513,10 @@ setTimeout(async () => {
       rule_id: "r1", symbol: sym, direction: dir, timeframe: "1m", fired_at: 1788140000,
       trigger_price: px, dedup_key: `${sym}:x`, context: {}, role_bars: {},
       tentative: false, priority: "normal", trading_day: null }) });
+    // **信号到达要刷"当前可见的那个视图"**：原来只刷隐藏的单图，
+    // 九宫格上的新信号标注根本不出现。记下偏移量看这次刷了哪些接口 ——
+    // **别清空 calls**，另一条测试靠它检查"面板调过哪些端点"（清了就红）。
+    const callMark = calls.length;
     sandbox.__sse.on.signal(mk("CRYPTO.OKX.BTCUSDT.PERP", "long", 78000));
     sandbox.__sse.on.signal(mk("CRYPTO.OKX.ETHUSDT.PERP", "long", 2400));
     await new Promise((r) => setTimeout(r, 900));   // 等合并窗口（400ms）过去
@@ -512,6 +527,9 @@ setTimeout(async () => {
       beeps_from_signals: (sandbox.__beeps || 0) - afterToggle.beeps,
       spoken: (sandbox.__spoken || []).slice(afterToggle.spoken),
       notifications: (sandbox.__notes || []).length,
+      // 信号到达后重新拉过的接口（用来验证"刷的是当前视图"）
+      refetched: calls.slice(callMark).filter((u) => String(u).includes("/api/")).map(
+        (u) => String(u).split("?")[0]),
     };
   } catch (e) { alertError = String(e && e.message || e); }
 

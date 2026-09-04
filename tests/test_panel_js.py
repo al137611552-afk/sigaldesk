@@ -1362,3 +1362,42 @@ def test_top_readout_is_per_mode() -> None:
     grid = grid[: grid.index("\n}\n")]
     assert "renderOhlc(" in grid, "九周期要把顶部读数写成真的当前值"
     assert 'c.tf === "1m"' in grid, "取 1m 那格 —— 最接近'现在'"
+
+
+def test_signal_event_refreshes_the_visible_view(smoke: dict[str, object]) -> None:
+    """**新信号到达要刷「当前可见的那个视图」。**
+
+    原来只有 `loadChart(...)` —— 那是九宫格出现之前写的：在九宫格模式下
+    它刷的是**隐藏的单图**，九个格子和格子上的信号标注一个都没刷，
+    于是新信号在九宫格上根本不出现（直到手动切标的/周期）。
+
+    与「下拉框那条路径分模式、信号流那条漏了」是同一类问题：
+    **同一个动作，分模式的路径漏了一条。**
+    """
+    got = (smoke["alerts"] or {}).get("refetched") or []  # type: ignore[union-attr]
+    assert any("/api/bars" in u for u in got), f"信号到达后没重拉 bars：{got}"
+    assert any("/api/markers" in u for u in got), (
+        f"信号到达后没重拉 markers —— 新信号的标注就画不出来：{got}"
+    )
+
+    js = APP.read_text(encoding="utf-8")
+    fn = js[js.index('es.addEventListener("signal"'):]
+    fn = fn[: fn.index("});")]
+    # **只看代码行**：注释里引用了旧写法 `loadChart(...)`，连注释一起匹配会误判。
+    # 这类"断言写太粗"的错这一轮犯了五次，一律先剥注释。
+    code = "\n".join(ln for ln in fn.splitlines() if not ln.strip().startswith("//"))
+    assert "refreshMarket()" in code, "要走分模式的那份，别再写第三份"
+    assert "loadChart(" not in code, "直接调 loadChart 只会刷隐藏的单图"
+
+
+def test_refresh_failure_is_not_swallowed() -> None:
+    """**空的 catch 会把「整条路径抛错」伪装成「没有更新」。**
+
+    我自己被它骗过一次：桩里少一个 `getVisibleLogicalRange`，
+    冒烟显示"没刷任何接口"，看着像逻辑没走到，其实是抛错被吞了。
+    刷新失败不该打断盯盘，但必须能在控制台看见（截图检查会抓）。
+    """
+    js = APP.read_text(encoding="utf-8")
+    fn = js[js.index("async function refreshMarket()"):]
+    fn = fn[: fn.index("\n}\n")]
+    assert "console.error" in fn, "刷新失败要留痕，别静默"

@@ -398,8 +398,11 @@ async function refreshMarket() {
     } else if (S.symbol && S.chart) {
       await keepView(S.chart, () => loadChart(S.selected ? S.selected.fired_at : null));
     }
-  } catch {
-    // 刷新失败不该打断盯盘 —— 下一轮再试。真正的连通性问题「运行健康」页会说。
+  } catch (e) {
+    // 刷新失败不该打断盯盘 —— 下一轮再试。但**不能静默**：
+    // 空的 catch 会把"整条路径抛错"伪装成"没有更新"，我自己就被它骗过一次
+    // （桩里少一个 timeScale 方法，冒烟显示"没刷任何接口"，看着像逻辑没走到）。
+    console.error("行情刷新失败", e);
   }
 }
 
@@ -2574,7 +2577,12 @@ function connectSSE() {
     fillSymbolPicker();  // 某标的第一次触发时，它才会进「有信号」那一组
     fillRuleFilter();  // 新规则第一次触发时，它才会出现在筛选框里
     renderFeed();
-    if (S.symbol) await loadChart(S.selected ? S.selected.fired_at : null);
+    // **刷"当前可见的那个视图"，不是那张隐藏的单图。**
+    // 原来只有 `loadChart(...)` —— 那是九宫格出现之前写的：在九宫格模式下
+    // 它刷的是隐藏的单图，九个格子和格子上的信号标注一个都没刷，
+    // 于是新信号在九宫格上**根本不出现**（直到手动切标的/周期）。
+    // refreshMarket 已经是分模式的，直接用它，别再写第三份。
+    await refreshMarket();
     setBadge("#mode", "实时 · 已连接", "ok");
   });
   es.addEventListener("hello", () => setBadge("#mode", "实时 · 已连接", "ok"));
