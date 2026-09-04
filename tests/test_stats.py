@@ -132,7 +132,7 @@ def test_atr_key_overrides_percentage_stops() -> None:
     s = sig(context={"atr14": 2.0})
     future = [bar(660, o=100.0, h=100.5, low=96.5, c=98.0)]
 
-    pct = evaluate(s, future, OutcomeParams(stop_pct=0.005, target_pct=0.01))
+    pct = evaluate(s, future, OutcomeParams(stop_pct=0.005, target_pct=0.01, atr_key=None))
     atr = evaluate(
         s, future, OutcomeParams(stop_pct=0.005, target_pct=0.01, atr_key="atr14", stop_atr=1.5)
     )
@@ -142,11 +142,35 @@ def test_atr_key_overrides_percentage_stops() -> None:
     assert atr.reason is ExitReason.STOP
 
 
+def test_atr_is_the_default_basis() -> None:
+    """**默认口径就是 ATR。** 曾经默认是百分比，而纸上撮合/rule_eval 各自传了
+    atr14 —— 面板上的胜率和模拟盘的胜率算的不是同一件事。默认值是全仓唯一来源，
+    这条测试就是钉死"不传参数时按 ATR"。"""
+    s = sig(context={"atr14": 2.0})
+    future = [bar(660, o=100.0, h=100.5, low=96.5, c=98.0)]
+    out = evaluate(s, future, OutcomeParams())
+    assert out.exit_price == pytest.approx(97.0)  # 100 − 1.5×2.0，不是 99.5
+    assert out.exit_basis == "atr"
+    assert OutcomeParams().atr_key == "atr14"
+
+
 def test_missing_atr_falls_back_to_percentage() -> None:
     s = sig(context={"atr14": None})
     future = [bar(660, o=100.0, h=100.1, low=99.0, c=99.2)]
     out = evaluate(s, future, OutcomeParams(atr_key="atr14", stop_pct=0.005))
     assert out.exit_price == pytest.approx(99.5)
+
+
+def test_silent_fallback_is_recorded_not_hidden() -> None:
+    """回落本身没错，**看不出回落了**才是问题：一批信号里混着两套口径，
+    报告上毫无异常，横向比较却已经不成立。所以每条都记下自己用的口径。"""
+    have = sig(context={"atr14": 2.0})
+    lack = sig(context={})  # 规则的 context: 没声明 atr14，或预热期还是 None
+    future = [bar(660, o=100.0, h=100.1, low=99.4, c=99.6)]
+
+    assert evaluate(have, future, OutcomeParams()).exit_basis == "atr"
+    assert evaluate(lack, future, OutcomeParams()).exit_basis == "pct"
+    assert evaluate(have, future, OutcomeParams(atr_key=None)).exit_basis == "pct"
 
 
 # ---------------------------------------------------------------- 成本

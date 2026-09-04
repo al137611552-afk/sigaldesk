@@ -57,15 +57,19 @@ def load_trading(path: pathlib.Path) -> DeskParams:
     r_raw = dict(raw.get("risk") or {})
     f_raw = dict(raw.get("fills") or {})
 
+    # 缺省值一律取自 OutcomeParams 的字段默认，**不在这里另写一套字面量** ——
+    # 两处各写一套的下场是面板与模拟盘算出不同的止损位（见 OutcomeParams.atr_key）。
+    d = OutcomeParams()
     try:
         exits = OutcomeParams(
-            horizon_bars=_int(e_raw, "horizon_bars", 20),
-            stop_pct=_num(e_raw, "stop_pct", 0.005),
-            target_pct=_num(e_raw, "target_pct", 0.010),
-            cost_bps=_num(e_raw, "cost_bps", 0.0),
-            atr_key=None if e_raw.get("atr_key") is None else str(e_raw["atr_key"]),
-            stop_atr=_num(e_raw, "stop_atr", 1.5),
-            target_atr=_num(e_raw, "target_atr", 3.0),
+            horizon_bars=_int(e_raw, "horizon_bars", d.horizon_bars),
+            stop_pct=_num(e_raw, "stop_pct", d.stop_pct),
+            target_pct=_num(e_raw, "target_pct", d.target_pct),
+            cost_bps=_num(e_raw, "cost_bps", d.cost_bps),
+            atr_key=d.atr_key if "atr_key" not in e_raw
+            else (None if e_raw["atr_key"] is None else str(e_raw["atr_key"])),
+            stop_atr=_num(e_raw, "stop_atr", d.stop_atr),
+            target_atr=_num(e_raw, "target_atr", d.target_atr),
         )
         strategy = StrategyParams(
             mode=mode,  # type: ignore[arg-type]

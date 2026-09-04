@@ -1440,3 +1440,21 @@ def test_scatter_axes_carry_numbers() -> None:
     fn = js[js.index("function renderScatter("):]
     fn = fn[: fn.index("\n}\n")]
     assert "pctTxt(mfeMax)" in fn and "pctTxt(maeMax)" in fn, "两根轴都要给数值刻度"
+
+
+def test_stats_params_are_all_valid(smoke: dict[str, object]) -> None:
+    """**统计口径的每个字段都得是有效值。**
+
+    桩里的表单默认值现在从 index.html 现推（见 panel_smoke.mjs FORM_DEFAULTS）。
+    以前是手写的一份映射，加了 `stop_atr`/`target_atr` 之后它没跟上，
+    `Number(undefined)` = NaN 就那么发给了后端 —— 而冒烟测试照样全绿，
+    因为没有一条断言看过这些值。这条测试补上那一眼。
+    """
+    p = smoke["stats_params"]
+    assert isinstance(p, dict) and "err" not in p, p
+    # 止损口径以 ATR 倍数为准；atr_key 必须显式传，否则表单管不住实际口径
+    assert p["atr_key"] == "atr14"
+    for k in ("horizon_bars", "stop_pct", "target_pct", "cost_bps", "stop_atr", "target_atr"):
+        v = p[k]
+        assert isinstance(v, (int, float)) and v == v, f"{k} 不是有效数字：{v!r}"
+    assert p["stop_atr"] > 0 and p["target_atr"] > 0

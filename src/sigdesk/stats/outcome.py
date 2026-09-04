@@ -44,7 +44,15 @@ class OutcomeParams:
     entry_on_next_open: bool = True  # False = 用信号那根的收盘价入场（偏乐观）
     # 若设了 atr_key 且信号 context 里有该值，就用 ATR 倍数替代百分比 ——
     # 期货各品种波动率差异极大，固定百分比会让活跃品种全打止损、呆滞品种永不触发。
-    atr_key: str | None = None
+    #
+    # **默认就是 ATR，而且这里是全仓唯一的默认值来源。** 曾经不是：面板
+    # /api/stats 和 /api/trial 都没传 atr_key（=百分比），而纸上撮合、
+    # rule_eval 传了 atr14（=ATR），于是"面板上的胜率"和"模拟盘的胜率"
+    # 算的根本不是同一件事 —— 正是 risk_distances 注释里说要消灭的那种分家，
+    # 只不过分家的是**参数**而不是函数，共用函数一点都挡不住。
+    # 改默认值之外，各调用点也一律不再自己写字面量（见 trade/loader.py、
+    # scripts/rule_eval.py、web/api.py）。
+    atr_key: str | None = "atr14"
     stop_atr: float = 1.5
     target_atr: float = 3.0
 
@@ -73,6 +81,7 @@ class Outcome:
     mfe: float  # 最大有利偏移（持有期内最好的浮盈比例）
     mae: float  # 最大不利偏移（持有期内最差的浮亏比例，<= 0）
     bars_held: int
+    exit_basis: str = "pct"  # 这一条实际用的止损口径："atr" 或 "pct"（见 exit_basis()）
 
     @property
     def is_win(self) -> bool:
@@ -100,11 +109,27 @@ class Outcome:
             "mfe": self.mfe,
             "mae": self.mae,
             "bars_held": self.bars_held,
+            "exit_basis": self.exit_basis,
         }
 
 
 def _sign(direction: Direction) -> float:
     return -1.0 if direction is Direction.SHORT else 1.0
+
+
+def exit_basis(context: Mapping[str, float | None], params: OutcomeParams) -> str:
+    """这一条实际按哪套口径算止损止盈：``"atr"`` 或 ``"pct"``。
+
+    **必须能被报出来。** ``atr_key`` 设了、但信号快照里没有那个值（规则的
+    ``context:`` 没声明 atr14，或者预热期还是 None）时会**静默回落**到百分比：
+    一批信号里混着两套口径，报告上看不出任何异常，横向比较却已经不成立。
+    所以每条 Outcome 都记下自己用的是哪套，报告里给出混用计数。
+    """
+    if params.atr_key:
+        atr = context.get(params.atr_key)
+        if atr is not None and atr > 0:
+            return "atr"
+    return "pct"
 
 
 def risk_distances(
@@ -115,10 +140,10 @@ def risk_distances(
     **纸上撮合（trade/）也调这个函数**，不是各写一份。口径一旦分家，就会出现
     "统计说赚钱、模拟盘说不赚"而无从排查的局面 —— 那正是 ADR-0001 要消灭的东西。
     """
-    if params.atr_key:
-        atr = context.get(params.atr_key)
-        if atr is not None and atr > 0:
-            return params.stop_atr * atr, params.target_atr * atr
+    if exit_basis(context, params) == "atr":
+        atr = context[params.atr_key]  # type: ignore[index]  # exit_basis 已保证非空
+        assert atr is not None
+        return params.stop_atr * atr, params.target_atr * atr
     return entry * params.stop_pct, entry * params.target_pct
 
 
@@ -138,6 +163,7 @@ def evaluate(signal: Signal, future: list[Bar], params: OutcomeParams | None = N
         return _no_data(signal)
 
     sign = _sign(signal.direction)
+    basis = exit_basis(signal.context, p)
     stop_d, target_d = risk_distances(signal.context, entry, p)
     stop = entry - sign * stop_d
     target = entry + sign * target_d
@@ -153,10 +179,12 @@ def evaluate(signal: Signal, future: list[Bar], params: OutcomeParams | None = N
         hit_stop = bar.low <= stop if sign > 0 else bar.high >= stop
         hit_target = bar.high >= target if sign > 0 else bar.low <= target
         if hit_stop:  # 同一根同时触及时保守取止损（bar 数据给不出先后）
-            return _make(signal, entry_bar, entry, bar, stop, ExitReason.STOP, best, worst, i, p)
+            return _make(signal, entry_bar, entry, bar, stop, ExitReason.STOP,
+                         best, worst, i, p, basis)
         if hit_target:
             return _make(
-                signal, entry_bar, entry, bar, target, ExitReason.TARGET, best, worst, i, p
+                signal, entry_bar, entry, bar, target, ExitReason.TARGET,
+                best, worst, i, p, basis
             )
 
     held = future[: p.horizon_bars]
@@ -164,7 +192,8 @@ def evaluate(signal: Signal, future: list[Bar], params: OutcomeParams | None = N
         return _no_data(signal)
     last = held[-1]
     return _make(
-        signal, entry_bar, entry, last, last.close, ExitReason.HORIZON, best, worst, len(held), p
+        signal, entry_bar, entry, last, last.close, ExitReason.HORIZON,
+        best, worst, len(held), p, basis
     )
 
 
@@ -179,6 +208,7 @@ def _make(
     mae: float,
     bars_held: int,
     p: OutcomeParams,
+    basis: str,
 ) -> Outcome:
     sign = _sign(signal.direction)
     gross = (exit_price - entry) / entry * sign
@@ -198,6 +228,7 @@ def _make(
         mfe=mfe,
         mae=mae,
         bars_held=bars_held,
+        exit_basis=basis,
     )
 
 

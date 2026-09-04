@@ -123,6 +123,10 @@ class QualityReport:
     by_symbol: dict[str, Stats] = field(default_factory=dict)
     by_hour: dict[int, Stats] = field(default_factory=dict)
     by_direction: dict[str, Stats] = field(default_factory=dict)
+    # 按止损口径分组（"atr" / "pct"）。**同时出现两个键就说明这批数混着两套口径**：
+    # 设了 atr_key 但部分信号快照里没有 atr14 时会静默回落（见 outcome.exit_basis）。
+    # 混用时横向比较不成立 —— 报出来，别让它藏着。
+    by_basis: dict[str, Stats] = field(default_factory=dict)
     params: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
@@ -132,6 +136,7 @@ class QualityReport:
             "by_symbol": {k: v.as_dict() for k, v in self.by_symbol.items()},
             "by_hour": {str(k): v.as_dict() for k, v in self.by_hour.items()},
             "by_direction": {k: v.as_dict() for k, v in self.by_direction.items()},
+            "by_basis": {k: v.as_dict() for k, v in self.by_basis.items()},
             "params": dict(self.params),
         }
 
@@ -150,6 +155,7 @@ def build_report(
         by_symbol=group_by(outcomes, lambda o: o.symbol),
         by_hour=group_by(outcomes, local_hour),
         by_direction=group_by(outcomes, lambda o: str(o.direction)),
+        by_basis=group_by(outcomes, lambda o: o.exit_basis),
         params=dict(params or {}),
     )
 
@@ -168,6 +174,13 @@ def format_report(report: QualityReport, top: int = 10) -> str:
         f"  平均最大浮盈 {o.avg_mfe:+.3%}  平均最大浮亏 {o.avg_mae:+.3%}  "
         f"平均持有 {o.avg_bars_held:.1f} 根",
     ]
+    # 混用口径要显眼地说出来 —— 不是分组里多一行，是一句警告
+    if len(report.by_basis) > 1:
+        parts = "、".join(f"{k} {st.signals} 条" for k, st in sorted(report.by_basis.items()))
+        lines.append(
+            f"  ⚠️  这批数**混着两套止损口径**（{parts}）：设了 atr_key 但部分信号"
+            f"快照里没有该 ATR 值，静默回落到了百分比。横向比较不成立。"
+        )
     for title, group in (
         ("分规则", report.by_rule),
         ("分品种", report.by_symbol),

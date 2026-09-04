@@ -284,9 +284,28 @@ const missingIds = () => [...asked]
               && !APPSRC.includes(`id="${s.slice(1)}"`))
   .sort();
 
+// **表单默认值从 index.html 现推，不再手写一份映射。**
+// 手写的那份漏了新加的 name 时，statsParams() 会拿到 undefined -> Number() -> NaN，
+// 悄悄发给后端；而冒烟测试照样全绿（没人断言值）。踩过 stop_atr/target_atr 这一次。
+const FORM_DEFAULTS = (() => {
+  const out = {};
+  for (const m of INDEX.matchAll(/<input\b[^>]*>/g)) {
+    const tag = m[0];
+    const name = /\bname="([^"]+)"/.exec(tag);
+    if (!name) continue;
+    const val = /\bvalue="([^"]*)"/.exec(tag);
+    out[name[1]] = /\btype="checkbox"/.test(tag)
+      ? (/\bchecked\b/.test(tag) ? "on" : "") : (val ? val[1] : "");
+  }
+  for (const m of INDEX.matchAll(/<select\b[^>]*\bname="([^"]+)"[\s\S]*?<\/select>/g)) {
+    const first = /<option\s+value="([^"]*)"/.exec(m[0]);
+    out[m[1]] = first ? first[1] : "";
+  }
+  return out;
+})();
+
 class FormData {
-  get(k) { return { horizon_bars: "20", stop_pct: "0.5", target_pct: "1.0",
-                    cost_bps: "0", entry_on_next_open: "on" }[k]; }
+  get(k) { return FORM_DEFAULTS[k]; }
 }
 const sandbox = {
   document: { querySelector: get, querySelectorAll: () => [], addEventListener() {},
@@ -564,6 +583,10 @@ setTimeout(async () => {
   })();
 
   console.log(JSON.stringify({
+    // 统计口径参数：所有字段都得是有效值。桩里少一个 name 就会在这里露出 NaN/null
+    // sandbox.statsParams 是 undefined（同 G 的情况），得在同一上下文里求值
+    stats_params: (() => { try { return vm.runInContext("statsParams()", sandbox); }
+                          catch (e) { return { err: e.message }; } })(),
     endpoints: [...new Set(calls.map((c) => c.split("?")[0]))].sort(),
     missing_ids: missingIds(),
     grid_error: gridError,

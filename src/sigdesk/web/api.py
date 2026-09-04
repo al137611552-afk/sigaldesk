@@ -154,6 +154,12 @@ class RuleSource(BaseModel):
     source: str = Field(..., description="规则 YAML 全文")
 
 
+# **口径默认值只有一个来源**：OutcomeParams 的字段默认。以前面板这边把
+# 20 / 0.005 / 0.010 又抄了两遍，而且都漏了 atr_key —— 于是面板算的是固定百分比、
+# 纸上撮合和 rule_eval 算的是 ATR 倍数，同一条信号两边给出的止损位不是一个数。
+_D = OutcomeParams()
+
+
 class TrialRequest(BaseModel):
     """试算请求。口径参数与 /api/stats 一致（ADR-0008），默认值也保持一致。"""
 
@@ -161,11 +167,16 @@ class TrialRequest(BaseModel):
     symbols: list[str] | None = None  # 不给就用规则自己的 universe
     start_ts: int = 0
     end_ts: int = 2**31
-    horizon_bars: int = Field(20, ge=1, le=500)
-    stop_pct: float = Field(0.005, gt=0)
-    target_pct: float = Field(0.010, gt=0)
-    cost_bps: float = Field(0.0, ge=0)
-    entry_on_next_open: bool = True
+    horizon_bars: int = Field(_D.horizon_bars, ge=1, le=500)
+    stop_pct: float = Field(_D.stop_pct, gt=0)
+    target_pct: float = Field(_D.target_pct, gt=0)
+    cost_bps: float = Field(_D.cost_bps, ge=0)
+    entry_on_next_open: bool = _D.entry_on_next_open
+    # 止损口径：atr_key 非空且信号快照里有该值时按 ATR 倍数，否则回落到百分比。
+    # 传空串等于显式要求走百分比。
+    atr_key: str | None = _D.atr_key
+    stop_atr: float = Field(_D.stop_atr, gt=0)
+    target_atr: float = Field(_D.target_atr, gt=0)
 
 
 # 开发机 2 核 4G。试算是同步阻塞的，喂太多会把面板拖死 —— 宁可明确拒绝。
@@ -539,11 +550,14 @@ def create_app(state: ServiceState) -> FastAPI:
     def stats(
         rule_id: str | None = None,
         symbol: str | None = None,
-        horizon_bars: int = Query(20, ge=1, le=500),
-        stop_pct: float = Query(0.005, gt=0),
-        target_pct: float = Query(0.010, gt=0),
-        cost_bps: float = Query(0.0, ge=0),
-        entry_on_next_open: bool = True,
+        horizon_bars: int = Query(_D.horizon_bars, ge=1, le=500),
+        stop_pct: float = Query(_D.stop_pct, gt=0),
+        target_pct: float = Query(_D.target_pct, gt=0),
+        cost_bps: float = Query(_D.cost_bps, ge=0),
+        entry_on_next_open: bool = _D.entry_on_next_open,
+        atr_key: str | None = _D.atr_key,
+        stop_atr: float = Query(_D.stop_atr, gt=0),
+        target_atr: float = Query(_D.target_atr, gt=0),
         since: int | None = None,
         until: int | None = None,
     ) -> dict[str, Any]:
@@ -564,6 +578,7 @@ def create_app(state: ServiceState) -> FastAPI:
         params = OutcomeParams(
             horizon_bars=horizon_bars, stop_pct=stop_pct, target_pct=target_pct,
             cost_bps=cost_bps, entry_on_next_open=entry_on_next_open,
+            atr_key=atr_key or None, stop_atr=stop_atr, target_atr=target_atr,
         )
         outcomes = evaluate_all(sigs, bars_by_symbol, params)
         report = build_report(
@@ -571,6 +586,7 @@ def create_app(state: ServiceState) -> FastAPI:
             {
                 "horizon_bars": horizon_bars, "stop_pct": stop_pct, "target_pct": target_pct,
                 "cost_bps": cost_bps, "entry_on_next_open": entry_on_next_open,
+                "atr_key": atr_key or None, "stop_atr": stop_atr, "target_atr": target_atr,
                 # 时间范围也是口径 —— 换个区间结论就变，必须跟着报告一起带回
                 "since": since, "until": until,
             },
@@ -708,6 +724,8 @@ def create_app(state: ServiceState) -> FastAPI:
             horizon_bars=body.horizon_bars, stop_pct=body.stop_pct,
             target_pct=body.target_pct, cost_bps=body.cost_bps,
             entry_on_next_open=body.entry_on_next_open,
+            atr_key=body.atr_key or None, stop_atr=body.stop_atr,
+            target_atr=body.target_atr,
         )
         result = run_trial(
             rule, bars_by_symbol, outcome_params=params,
@@ -715,6 +733,8 @@ def create_app(state: ServiceState) -> FastAPI:
                 "horizon_bars": body.horizon_bars, "stop_pct": body.stop_pct,
                 "target_pct": body.target_pct, "cost_bps": body.cost_bps,
                 "entry_on_next_open": body.entry_on_next_open,
+                "atr_key": body.atr_key or None, "stop_atr": body.stop_atr,
+                "target_atr": body.target_atr,
             },
         )
         payload = result.as_dict()

@@ -907,6 +907,20 @@ const EXIT = [
   { key: "target", label: "触及止盈", fill: "#26a69a" },
 ];
 
+/* 一批结果里混着两套止损口径时的提示。**混用要说出来，别让它藏着**：
+   设了 atr_key 但部分信号快照里没有 atr14（规则的 context: 没声明，或预热期还是
+   None）就会静默回落到百分比，报告上看不出任何异常，横向比较却已经不成立。
+   服务端在 rep.by_basis 里按口径分了组，出现两个键就是混用。 */
+function basisNote(rep) {
+  const by = (rep && rep.by_basis) || {};
+  const keys = Object.keys(by);
+  if (keys.length < 2) return "";
+  const parts = keys.sort().map((k) => `${k} ${by[k].signals} 条`).join(" / ");
+  return `<div class="warn">⚠️ 这批数<b>混着两套止损口径</b>（${parts}）：`
+    + `部分信号的快照里没有 atr14，静默回落到了百分比。横向比较不成立 —— `
+    + `先给那条规则的 <code>context:</code> 补上 <code>atr14: atr(14)</code>。</div>`;
+}
+
 /* 统计口径。质量统计页与规则试算共用同一份 —— 两处各写一份迟早分家，
    然后就会出现"试算说赚钱、统计说不赚"而无从排查。表单里是百分数，接口要小数。 */
 function statsParams() {
@@ -917,6 +931,12 @@ function statsParams() {
     target_pct: Number(f.get("target_pct")) / 100,
     cost_bps: Number(f.get("cost_bps")),
     entry_on_next_open: Boolean(f.get("entry_on_next_open")),
+    // 止损口径以 ATR 倍数为准，上面的百分比只在快照里没有 atr14 时回落。
+    // 不传 atr_key 的话后端会用它自己的默认值 —— 那样这个表单就管不住实际口径了，
+    // 于是"面板上写着 0.5%、实际算的是 ATR×1.5"。显式传。
+    atr_key: "atr14",
+    stop_atr: Number(f.get("stop_atr")),
+    target_atr: Number(f.get("target_atr")),
   };
 }
 
@@ -1253,6 +1273,9 @@ async function loadStats(e) {
   // **区间要写出来。** 不写明时间范围的胜率没有意义：换个区间结论就变。
   // 服务端把 since/until 原样带回（它们是口径的一部分），这里照着显示，
   // 不用前端自己那份 —— 否则显示的和实际算的可能是两回事。
+  const bn = $("#stats-basis-note");
+  if (bn) bn.innerHTML = basisNote(rep);
+
   const box = $("#stats-range-note");
   if (box) {
     const d = (ts) => fmtTime(ts, "CN.X.Y").slice(0, 5);   // 期货口径：CST 的月-日
@@ -2876,9 +2899,10 @@ async function trialRule() {
       ${hero("盈亏比", none || !o.payoff ? "—" : num(o.payoff), none ? "dim" : "")}
     </div>
     ${bandBlocks}
-    <div class="callout">口径：持有 ${params.horizon_bars} 根 · 止损
-      ${(params.stop_pct * 100).toFixed(2)}% · 止盈 ${(params.target_pct * 100).toFixed(2)}%
-      · 单边 ${params.cost_bps}bp。<br>
+    <div class="callout">口径：持有 ${params.horizon_bars} 根 · 止损 ATR×${num(params.stop_atr)}
+      · 止盈 ATR×${num(params.target_atr)} · 单边 ${params.cost_bps}bp
+      <span class="lbl">（快照里没有 atr14 时回落到 ${(params.stop_pct * 100).toFixed(2)}%
+      / ${(params.target_pct * 100).toFixed(2)}%）</span>${basisNote(body.report)}<br>
       试算不落盘、不推送、不下单；用的是与实盘同一个引擎（ADR-0001）。</div>`;
 }
 

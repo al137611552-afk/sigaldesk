@@ -133,8 +133,9 @@ def main() -> int:
         print("没有任何标的有 1m 数据，无法试算。")
         return 1
 
-    params = OutcomeParams(horizon_bars=args.horizon, cost_bps=args.cost_bps,
-                           atr_key="atr14", stop_atr=1.5, target_atr=3.0)
+    # 止损口径走 OutcomeParams 的默认（ATR×1.5/×3.0）——
+    # 这里曾经硬编码同样的值，面板那边却没传，两边算的不是一回事。
+    params = OutcomeParams(horizon_bars=args.horizon, cost_bps=args.cost_bps)
     for rule in targets:
         r = evaluate_rule(rule, series, params, args.stride)
         print(f"── {rule.id}（{rule.emit.direction}，扳机 {r['trig_tf'].value}）")

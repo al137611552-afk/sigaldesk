@@ -42,7 +42,10 @@ def main() -> int:
     ap.add_argument("--stop-pct", type=float, default=0.5, help="止损百分比")
     ap.add_argument("--target-pct", type=float, default=1.0, help="止盈百分比")
     ap.add_argument("--cost-bps", type=float, default=0.0, help="**单边**成本基点；0 = 毛收益")
-    ap.add_argument("--atr-key", default=None, help="用信号快照里的该 ATR 值替代百分比止损")
+    ap.add_argument(
+        "--atr-key", default=OutcomeParams().atr_key,
+        help="用信号快照里的该 ATR 值替代百分比止损；传空串强制走百分比",
+    )
     ap.add_argument("--entry-on-signal-close", action="store_true",
                     help="用信号那根的收盘价入场（偏乐观，见 ADR-0008）")
     ap.add_argument("--json", action="store_true")
@@ -76,7 +79,7 @@ def main() -> int:
         target_pct=args.target_pct / 100,
         cost_bps=args.cost_bps,
         entry_on_next_open=not args.entry_on_signal_close,
-        atr_key=args.atr_key,
+        atr_key=args.atr_key or None,
     )
     report = build_report(
         evaluate_all(signals, bars, params),

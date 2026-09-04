@@ -12,7 +12,14 @@ strategy:
   risk_per_trade: 0.005 # 单笔风险 = 权益的 0.5%
   fixed_qty: 1
   notional_per_trade: 1000
-  # 止损止盈：与 /api/stats 的默认口径保持一致，两边算出来的是同一个止损位
+  # 止损止盈。**这几行是可选的**：不写就用 OutcomeParams 的字段默认，
+  # 那也是 /api/stats、/api/rules/trial、scripts/rule_eval.py 用的同一套默认值
+  # （全仓唯一来源）。写在这里只是为了让配置自解释。
+  #
+  # 曾经这里的注释写着"与 /api/stats 保持一致"，而那是**假的**：面板两个接口
+  # 都没传 atr_key（=固定百分比 0.5%），只有纸上撮合和 rule_eval 传了 atr14
+  # （=ATR×1.5）。共用 risk_distances() 一点都挡不住 —— 分家的是参数。
+  # 现在由 tests/test_web.py::test_exit_convention_defaults_agree_across_call_sites 钉住。
   exits:
     horizon_bars: 20
     stop_pct: 0.005

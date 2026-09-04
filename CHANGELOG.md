@@ -4,6 +4,32 @@
 
 ## [Unreleased]
 
+### Fixed
+- **出场口径不再分家：ATR 成为全仓唯一默认。** `/api/stats` 与 `/api/rules/trial`
+  都没传 `atr_key`（=固定百分比 0.5%/1.0%），而 `trade/loader.py` 和
+  `scripts/rule_eval.py` 传了 `atr14`（=ATR×1.5/×3.0）—— **同一条信号，面板显示的
+  止损位和模拟盘用的不是一个数**，两边都不报错。`risk_distances()` 明明是共用函数，
+  它的注释还写着"口径一旦分家就会出现统计说赚钱、模拟盘说不赚"：
+  **共用函数挡不住，分家的是参数**。
+  现在 `OutcomeParams` 的字段默认是唯一来源（`atr_key="atr14"`），五个调用点
+  一律不再自己写字面量，`config/trading.yaml` 里那句"与 /api/stats 保持一致"
+  （它是假的）也改掉了。由 `test_exit_convention_defaults_agree_across_call_sites` 钉住
+  ——已用回退验证它确实会红。
+  **面板上的数会变**（本地样本：kdzx-long 胜率 56.5% → 37.5%、期望 0.0555% → 0.0068%）。
+  变的是面板：`rule_eval` 和纸上撮合一直按 ATR 算，基于它们得出的结论不受影响。
+
+### Added
+- **`Outcome.exit_basis`**（`"atr"` / `"pct"`）+ 报告的 `by_basis` 分组。
+  `atr_key` 设了但某条信号快照里没有 atr14（规则 `context:` 没声明，或预热期）会
+  **静默回落**到百分比。回落是对的，**看不出回落了**才是问题：一批数混着两套口径，
+  报告上毫无异常，横向比较却已经不成立。现在终端报告和面板都会显式告警。
+- 面板统计口径表单以 **ATR 倍数**为主输入，百分比明确标注为"无 ATR 时回落"；
+  `statsParams()` 显式传 `atr_key`，否则表单管不住实际口径。
+- 冒烟测试的表单默认值改为**从 index.html 现推**（原来是手写映射，加了
+  `stop_atr`/`target_atr` 后它没跟上，`Number(undefined)`=NaN 直接发给后端，
+  而测试照样全绿）。新增一条断言检查每个口径字段都是有效值——同样用回退验证过。
+
+
 ### Changed
 - **as-of 视图不再拷贝 bar 序列**（`BarView.bars()` 返回只读前缀视图 `_Prefix`）。
   原来每建一个视图就 `tuple(seq[:cut])` 拷一份，最多 5000 根；而回测里**每根 bar、

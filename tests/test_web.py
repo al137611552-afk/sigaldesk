@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import inspect
 import pathlib
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic.fields import FieldInfo
 
 from sigdesk.core.calendar import MarketCalendar
 from sigdesk.core.models import Bar, Timeframe
@@ -22,6 +24,7 @@ from sigdesk.core.registry import load_registry
 from sigdesk.feed.okx import normalize_candles
 from sigdesk.rules.engine import RuleEngine
 from sigdesk.rules.loader import load_rule
+from sigdesk.stats.outcome import OutcomeParams
 from sigdesk.store.bar_store import BarStore
 from sigdesk.store.parquet_io import write_bars
 from sigdesk.store.runtime_store import RuntimeStore
@@ -1003,3 +1006,59 @@ def test_evaluate_all_matches_the_naive_implementation() -> None:
     fast = evaluate_all(sigs, {"X.Y.Z": bars}, p)
     naive = [evaluate(s, [b for b in bars if b.close_ts > s.fired_at], p) for s in sigs]
     assert fast == naive
+
+
+# ------------------------------------- 出场口径：全仓只能有一份默认值
+
+
+def test_exit_convention_defaults_agree_across_call_sites(
+    wired: tuple[TestClient, ServiceState], tmp_path: pathlib.Path
+) -> None:
+    """**面板、纸上撮合、CLI 必须默认同一套止损口径。**
+
+    踩过的坑：`/api/stats` 与 `/api/trial` 都没传 `atr_key`（=固定百分比 0.5%），
+    而 `trade/loader.py` 和 `scripts/rule_eval.py` 传了 `atr14`（=ATR×1.5）。
+    `risk_distances` 是共用的，但**参数分家了**，共用函数一点都挡不住 ——
+    同一条信号，面板算出的止损位和模拟盘算出的不是一个数，而两边都不会报错。
+
+    这条测试比对的是"各入口的默认值"，就是当初能抓住那个 bug 的那一条。
+    """
+    from sigdesk.trade.loader import load_trading
+    from sigdesk.web.api import TrialRequest
+
+    d = OutcomeParams()
+    fields = ("horizon_bars", "stop_pct", "target_pct", "cost_bps",
+              "entry_on_next_open", "atr_key", "stop_atr", "target_atr")
+
+    # ① /api/trial 的请求体默认
+    body = TrialRequest(source="x")
+    for f in fields:
+        assert getattr(body, f) == getattr(d, f), f"TrialRequest.{f} 与 OutcomeParams 不一致"
+
+    # ② /api/stats 的查询参数默认（直接读路由函数签名，不靠跑一遍）
+    client, _ = wired
+    route = next(r for r in client.app.routes if getattr(r, "path", None) == "/api/stats")
+    sig = inspect.signature(route.endpoint)
+    for f in fields:
+        got = sig.parameters[f].default
+        got = got.default if isinstance(got, FieldInfo) else got
+        assert got == getattr(d, f), f"/api/stats 的 {f} 默认值与 OutcomeParams 不一致"
+
+    # ③ trading.yaml 没写 exits 时的回落
+    cfg = tmp_path / "trading.yaml"
+    cfg.write_text("enabled: false\ninitial_cash: 1000\n", encoding="utf-8")
+    exits = load_trading(cfg).strategy.exits
+    for f in fields:
+        assert getattr(exits, f) == getattr(d, f), \
+            f"trading.yaml 缺省的 {f} 与 OutcomeParams 不一致"
+
+
+def test_stats_reports_mixed_exit_basis(wired: tuple[TestClient, ServiceState]) -> None:
+    """回落本身没错，**看不出回落了**才是问题。报告里必须能看到每条用的哪套。"""
+    client, _ = wired
+    body = client.get("/api/stats").json()
+    assert "by_basis" in body
+    assert set(body["by_basis"]) <= {"atr", "pct"}
+    assert sum(v["signals"] for v in body["by_basis"].values()) == body["overall"]["signals"]
+    for o in body["outcomes"]:
+        assert o["exit_basis"] in ("atr", "pct")
