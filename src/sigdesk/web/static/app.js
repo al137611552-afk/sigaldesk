@@ -1082,15 +1082,23 @@ function renderScatter(rep) {
     el.append(svg("circle", { cx: PX(o.mae).toFixed(1), cy: PY(o.mfe).toFixed(1), r: 2.4,
                               fill: o.ret > 0 ? "var(--up)" : "var(--down)", opacity: 0.75 }));
   }
+  // **坐标轴必须给数值**：只写"浮盈/浮亏"看不出量级，而止损止盈线又是绝对距离，
+  // 不标数就没法判断"点离线还有多远"（用户问"横纵坐标是什么"）。
+  const pctTxt = (v) => (v * 100).toFixed(2) + "%";
   el.append(
     svg("text", { x: 30, y: 12, fill: "var(--dim)", "font-size": 9,
-                  "text-anchor": "end", "font-family": MONO_FF }, "浮盈"),
-    svg("text", { x: 30, y: 94, fill: "var(--dim)", "font-size": 9,
+                  "text-anchor": "end", "font-family": MONO_FF }, pctTxt(mfeMax)),
+    svg("text", { x: 30, y: 96, fill: "var(--dim)", "font-size": 9,
                   "text-anchor": "end", "font-family": MONO_FF }, "0"),
-    svg("text", { x: 34, y: 120, fill: "var(--dim)", "font-size": 9, "font-family": MONO_FF },
-        "← 浮亏更大"),
-    svg("text", { x: 354, y: 120, fill: "var(--dim)", "font-size": 9,
-                  "text-anchor": "end", "font-family": MONO_FF }, "浮亏 0"),
+    // 纵轴标题竖排在最左，横轴标题居中 —— 位置本身说明它标的是哪根轴
+    svg("text", { x: 9, y: 50, fill: "var(--dim)", "font-size": 9, "font-family": MONO_FF,
+                  "text-anchor": "middle", transform: "rotate(-90 9 50)" }, "最大浮盈"),
+    svg("text", { x: 34, y: 108, fill: "var(--dim)", "font-size": 9,
+                  "font-family": MONO_FF }, "-" + pctTxt(maeMax)),
+    svg("text", { x: 354, y: 108, fill: "var(--dim)", "font-size": 9,
+                  "text-anchor": "end", "font-family": MONO_FF }, "0"),
+    svg("text", { x: 194, y: 122, fill: "var(--dim)", "font-size": 9,
+                  "text-anchor": "middle", "font-family": MONO_FF }, "最大浮亏 →"),
   );
 }
 
@@ -1102,7 +1110,11 @@ function renderHist(outs) {
   const vals = outs.filter((o) => o.reason !== "no_data").map((o) => o.ret * 100);
   if (vals.length < 2) return;
   const lo = Math.min(...vals, 0), hi = Math.max(...vals, 0);
-  const NB = 15, counts = new Array(NB).fill(0);
+  // **桶数要跟样本量走。** 硬编码 15 个桶时，50 条信号有 4 个空桶（27%），
+  // 柱子之间到处是洞 —— 看起来像数据缺失，其实是桶分太细了（用户问的就是这个）。
+  // 用 Sturges（⌈log2(n)⌉+1），与 √n 在这个量级上结论一致：n=50 时给 7 个桶，零空桶。
+  const NB = Math.max(5, Math.min(24, Math.ceil(Math.log2(vals.length)) + 1));
+  const counts = new Array(NB).fill(0);
   for (const v of vals) counts[Math.min(NB - 1, Math.floor((v - lo) / ((hi - lo) || 1) * NB))]++;
   const cmax = Math.max(...counts, 1), bw = 360 / NB;
   const X = (v) => ((v - lo) / ((hi - lo) || 1)) * 360;
@@ -1171,6 +1183,27 @@ function renderHorizon(rep) {
                               "text-anchor": "middle", "font-family": MONO_FF }, r.bars));
     }
   }
+  // **把结论直接写出来。** 这张图要防的是一个具体误判：只看毛期望会以为
+  // "持有更久更好"，而基准本身随持有期单调上涨（市场在涨，闭眼拿着也赚）。
+  // 用户问"这个图怎么看" —— 要靠问才明白的图等于没做。
+  const note = $("#horizon-note");
+  if (note) {
+    const cur2 = pts.find((r) => r.bars === rep.params.horizon_bars);
+    const best = pts.reduce((a, r) => (r.excess > a.excess ? r : a), pts[0]);
+    const drift = pts.at(-1).baseline - pts[0].baseline;
+    note.innerHTML = `<div class="callout">`
+      + `当前 <b>${rep.params.horizon_bars} 根</b>：超额 `
+      + `<span class="mono">${cur2 ? signed(cur2.excess) : "—"}</span>；`
+      + `曲线最高在 <b>${best.bars} 根</b>（<span class="mono">${signed(best.excess)}</span>）。<br>`
+      + `同期<b>基准</b>从 <span class="mono">${signed(pts[0].baseline)}</span> 变到 `
+      + `<span class="mono">${signed(pts.at(-1).baseline)}</span>`
+      + (Math.abs(drift) > 1e-5
+          ? ` —— 持有越久，行情漂移累积越多。<b>毛期望里那部分不是规则挣的</b>，`
+            + `所以要看两条线的间距。`
+          : `。`)
+      + `</div>`;
+  }
+
   el.append(
     svg("text", { x: 30, y: 88, fill: "var(--dim)", "font-size": 9, "font-family": MONO_FF }, ""),
     svg("text", { x: 26, y: Y(hi), fill: "var(--dim)", "font-size": 9, "text-anchor": "end",

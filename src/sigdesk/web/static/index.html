@@ -193,12 +193,12 @@
         <!-- ③④ 并排：都是"分布"视角，放一行省高度 -->
         <div class="stats-pair">
           <div>
-            <div class="sec-title"><b>浮盈 / 浮亏散点</b><span class="lbl">每点一条信号</span></div>
+            <div class="sec-title"><b>浮盈 / 浮亏散点</b><span class="lbl">横轴=最大浮亏，纵轴=最大浮盈，每点一条信号</span></div>
             <svg id="scatter" viewBox="0 0 360 126" width="100%" height="126"
                  style="display:block"></svg>
           </div>
           <div>
-            <div class="sec-title"><b>收益分布</b><span class="lbl">每条信号净收益</span></div>
+            <div class="sec-title"><b>收益分布</b><span class="lbl">每条信号净收益 · 桶数随样本量定</span></div>
             <svg id="hist" viewBox="0 0 360 126" width="100%" height="126"
                  style="display:block"></svg>
           </div>
@@ -207,9 +207,10 @@
         <!-- ⑥ 持有期敏感性：现在固定 20 根，这条曲线说明 20 是不是个好选择 -->
         <div>
           <div class="sec-title"><b>持有期敏感性</b>
-            <span class="lbl">期望随持有期怎么变 · 竖线是当前口径</span></div>
+            <span class="lbl">看两条线的<b>间距</b>，不是实线的高度 · 竖线是当前口径</span></div>
           <svg id="horizon" viewBox="0 0 740 92" width="100%" height="92"
                style="display:block"></svg>
+          <div id="horizon-note"></div>
         </div>
       </div>
       <div class="stats-col">

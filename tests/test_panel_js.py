@@ -1401,3 +1401,42 @@ def test_refresh_failure_is_not_swallowed() -> None:
     fn = js[js.index("async function refreshMarket()"):]
     fn = fn[: fn.index("\n}\n")]
     assert "console.error" in fn, "刷新失败要留痕，别静默"
+
+
+def test_histogram_bins_scale_with_sample_size() -> None:
+    """**桶数要跟样本量走，不能硬编码。**
+
+    原来固定 15 个桶：50 条信号有 4 个空桶（27%），柱子之间到处是洞 ——
+    看起来像数据缺失，其实是桶分太细（用户问的就是这个）。
+    Sturges（⌈log2(n)⌉+1）与 √n 在这个量级上结论一致：n=50 给 7 个桶，零空桶。
+    """
+    js = APP.read_text(encoding="utf-8")
+    fn = js[js.index("function renderHist("):]
+    fn = fn[: fn.index("\n}\n")]
+    code = "\n".join(ln for ln in fn.splitlines() if not ln.strip().startswith("//"))
+    assert "Math.log2" in code, "桶数要按样本量算（Sturges）"
+    assert "const NB = 15" not in code, "别再硬编码桶数"
+
+
+def test_new_blocks_say_how_to_read_them() -> None:
+    """**要靠问才明白的图等于没做。** 用户先后问了「散点的横纵坐标是什么」
+    「持有期敏感性怎么看」—— 老区块都有 callout 解释，新加的几块当时没有。
+    """
+    html = pathlib.Path("src/sigdesk/web/static/index.html").read_text(encoding="utf-8")
+    assert "横轴=最大浮亏" in html and "纵轴=最大浮盈" in html, "散点要写明坐标"
+    assert "看两条线的<b>间距</b>" in html, "持有期要写明怎么读"
+    assert 'id="horizon-note"' in html, "持有期要有自动生成的解读"
+
+    js = APP.read_text(encoding="utf-8")
+    fn = js[js.index("function renderHorizon("):]
+    fn = fn[: fn.index("\n}\n")]
+    assert "horizon-note" in fn and "基准" in fn, "解读里要点明基准的漂移"
+
+
+def test_scatter_axes_carry_numbers() -> None:
+    """只写「浮盈/浮亏」看不出量级，而止损止盈线是绝对距离 ——
+    不标数就没法判断「点离线还有多远」。"""
+    js = APP.read_text(encoding="utf-8")
+    fn = js[js.index("function renderScatter("):]
+    fn = fn[: fn.index("\n}\n")]
+    assert "pctTxt(mfeMax)" in fn and "pctTxt(maeMax)" in fn, "两根轴都要给数值刻度"
