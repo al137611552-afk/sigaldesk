@@ -15,7 +15,8 @@ from sigdesk.core.models import Bar, Timeframe
 from sigdesk.rules.engine import RuleEngine
 from sigdesk.rules.loader import load_rule
 from sigdesk.rules.trial import ConditionRecorder, run_trial
-from sigdesk.store.bar_store import BarStore
+from sigdesk.stats.outcome import ExitReason
+from sigdesk.store.bar_store import MAX_BARS, BarStore
 
 UID = "X"
 
@@ -150,3 +151,36 @@ def test_bands_are_sorted_and_non_overlapping(which: str) -> None:
     got = rec.bands(which=which)[UID]
     for prev, cur in zip(got, got[1:], strict=False):
         assert prev.to_ts < cur.from_ts
+
+
+def test_trial_evaluates_signals_older_than_the_store_memory_cap() -> None:
+    """**试算的评价序列必须是完整输入，不是 BarStore 里那份被裁过的。**
+
+    BarStore 有 MAX_BARS 的内存上限（开发机 2 核 4G），超出就裁掉最旧的。
+    原来 run_trial 用 `store.view(uid, end).bars(trigger_tf)` 取评价序列，注释还
+    写着"给全量是安全的" —— 它不是全量。于是早于保留窗口的信号在 evaluate_all
+    里二分落到 0，**静默拿窗口开头那几根当"未来"**：真实数据上三条相隔两周的
+    信号算出一模一样的 entry/exit，报告上毫无异常。扳机是 1m 时最严重
+    （5000 根只有三天半）。
+
+    这条测试喂超过上限的 bar，检查最早那条信号的 entry 紧跟着它自己的 fired_at。
+    """
+    rule = load_rule(SINGLE)
+    n = MAX_BARS * 2
+    # 前半段在 100 之上（会触发），后半段继续走高，保证序列远超内存上限
+    series = bars([101.0 + (i % 7) for i in range(n)])
+    res = run_trial(rule, {UID: series})
+
+    assert res.signals, "这段行情应该有信号"
+    first = min(res.signals, key=lambda s: s.fired_at)
+    assert first.fired_at < series[-MAX_BARS].close_ts, "最早的信号应落在被裁掉的那段里"
+
+    by_fired = {o.fired_at: o for o in res.outcomes}
+    out = by_fired[first.fired_at]
+    assert out.reason is not ExitReason.NO_DATA, "完整序列在手，不该评价不了"
+    # 进场必须紧跟它自己那根，而不是保留窗口的开头
+    assert first.fired_at < out.entry_ts <= first.fired_at + 120
+
+    # 每条信号的 entry 都要各不相同 —— 全挤在同一根上正是那个 bug 的表征
+    entries = [o.entry_ts for o in res.outcomes if o.evaluated]
+    assert len(set(entries)) == len(entries), "不同信号被评价到了同一根 bar 上"

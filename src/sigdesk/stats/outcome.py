@@ -277,6 +277,16 @@ def evaluate_all(
         if ks is None:
             ks = keys[signal.symbol] = [b.close_ts for b in series]
         i = bisect.bisect_right(ks, signal.fired_at)
+        # **i == 0 说明整条序列都在信号之后 —— 这条序列根本没覆盖到这条信号。**
+        # 信号必然是在某根 bar 上触发的，所以正常情况下至少有一根 close_ts <= fired_at。
+        # 不拦的话 `series[0:...]` 会把序列**最老的几根**当成"未来"，
+        # 算出一个看着完全正常的 entry/exit，谁也看不出来。
+        # 真踩过：BarStore 的 MAX_BARS 把 1m 序列裁到最后 5000 根，
+        # 早于窗口的信号全被评价到窗口开头那一根上（三条相隔两周的信号，
+        # entry/exit 一模一样）。根因在调用方，但这里必须先拦住。
+        if i == 0:
+            out.append(_no_data(signal))
+            continue
         out.append(evaluate(signal, list(series[i : i + p.horizon_bars + 2]), params))
     return out
 

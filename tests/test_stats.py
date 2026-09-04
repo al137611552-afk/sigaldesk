@@ -408,3 +408,28 @@ def test_cli_and_library_share_one_standard_error() -> None:
     code = "\n".join(ln for ln in src.splitlines() if not ln.strip().startswith("#"))
     assert "standard_error(" in code, "CLI 要用库里那份"
     assert "statistics.stdev" not in code, "CLI 不许自己再算一遍标准误"
+
+
+def test_evaluate_all_reports_no_data_when_series_misses_the_signal() -> None:
+    """**序列覆盖不到这条信号时要如实标 NO_DATA，不能静默拿最老的几根当"未来"。**
+
+    信号必然是在某根 bar 上触发的，所以正常情况下至少有一根 `close_ts <= fired_at`。
+    一根都没有，说明喂进来的序列根本不包含这条信号所在的那段行情。
+    不拦的话 `series[0:...]` 会把序列**开头**当成未来，算出一个看着完全正常的
+    entry/exit —— 报告上毫无异常，谁也看不出来。
+
+    真踩过：BarStore 的 MAX_BARS 把 1m 序列裁到最后 5000 根，三条相隔两周的信号
+    被评价到同一根上，entry/exit 一模一样（见 rules/trial.py 里的说明）。
+    """
+    old = sig(fired_at=600)
+    future = flat_path(100_000, [100.0, 101.0, 102.0])  # 整条都远在信号之后
+
+    out = evaluate_all([old], {BTC: future})[0]
+    assert out.reason is ExitReason.NO_DATA
+    assert not out.evaluated
+    assert out.entry_ts == 0
+
+    # 覆盖得到时照常评价
+    ok = evaluate_all([sig(fired_at=100_060)], {BTC: future})[0]
+    assert ok.reason is not ExitReason.NO_DATA
+    assert ok.entry_ts > 100_060

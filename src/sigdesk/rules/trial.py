@@ -18,6 +18,7 @@ from typing import Any
 from ..core.models import Bar, Timeframe
 from ..stats.outcome import Outcome, OutcomeParams, evaluate_all
 from ..stats.report import QualityReport, build_report
+from ..store.bar_builder import aggregate
 from ..store.bar_store import BarStore
 from .engine import RuleEngine
 from .model import Rule, Signal, store_timeframes
@@ -175,14 +176,22 @@ def run_trial(
             signals.extend(engine.on_bars(closed_now))
         i = j
 
-    # 评价用扳机周期的完整序列。evaluate_all 内部会按 close_ts > fired_at 物理截断，
-    # 所以这里给全量是安全的（INV-1 的同一个道理）。
+    # 评价用扳机周期的**完整**序列，从原始输入现聚合 —— **不能从 store 取**。
+    #
+    # 原来这里写的是 `store.view(uid, end).bars(trigger_tf)`，注释还说"给全量是
+    # 安全的"。它不是全量：BarStore 有 MAX_BARS=5000 的内存上限，超出就裁掉最旧的。
+    # 本地 cu2610 有 20460 根 1m，只剩最后 5000 根，于是早于窗口的信号在
+    # evaluate_all 里二分落到 0，**静默拿窗口开头那几根当"未来"** ——
+    # 三条相隔两周的信号算出一模一样的 entry/exit，报告上毫无异常。
+    # 扳机是 1m 时最严重（5000 根只有三天半），5m 上加密也照样越界。
+    #
+    # aggregate 与 store 内部用的是同一个 builder，所以聚合结果一致；
+    # 只是这里不受内存上限约束。evaluate_all 仍按 close_ts > fired_at 物理截断。
     trigger_tf = rule.timeframe
-    if merged:
-        end = merged[-1].close_ts
-        future = {uid: list(store.view(uid, end).bars(trigger_tf)) for uid in series}
-    else:
-        future = {}
+    future = {
+        uid: bars if trigger_tf is Timeframe.M1 else aggregate(uid, bars, trigger_tf)
+        for uid, bars in series.items()
+    }
     outcomes = evaluate_all(signals, future, outcome_params)
 
     return TrialResult(
