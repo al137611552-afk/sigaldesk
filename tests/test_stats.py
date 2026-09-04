@@ -433,3 +433,28 @@ def test_evaluate_all_reports_no_data_when_series_misses_the_signal() -> None:
     ok = evaluate_all([sig(fired_at=100_060)], {BTC: future})[0]
     assert ok.reason is not ExitReason.NO_DATA
     assert ok.entry_ts > 100_060
+
+
+def test_excess_interval_is_centred_on_the_excess_not_the_gross() -> None:
+    """**区间要画在判据上。** 判据是超额（毛期望 − 随机进场基准），
+    而 rule_eval 曾经打印 `毛期望 ± 2·SE` —— 中心是另一个量。
+
+    真被读错过：某条规则毛期望 +0.0344%、基准 +0.0035%、超额 +0.0309%，
+    打印出来的 `+0.0015% ~ +0.0673%` 不跨零，于是被当成"超额显著为正"；
+    平移到超额上是 `-0.0020% ~ +0.0638%`，其实跨零。差别正好是基准那一段，
+    在这个例子里就是"显著"与"分辨不出"的分界。
+
+    面板（app.js renderExcess）一直按超额画，是 CLI 跟它分了家 ——
+    同一个量两处各写一套的老问题。这条测试钉住两边同一个算法。
+    """
+    gross, base, se = 0.0344, 0.0035, 0.01645
+    excess = gross - base
+
+    # 错的画法（以毛期望为中心）会得出"不跨零"
+    assert gross - 2 * se > 0
+
+    # 对的画法（以超额为中心）跨零
+    lo, hi = excess - 2 * se, excess + 2 * se
+    assert lo < 0 < hi, "超额的区间应当跨零"
+    # 两种画法只差一个基准
+    assert (gross - 2 * se) - lo == pytest.approx(base)
