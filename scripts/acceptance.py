@@ -47,6 +47,26 @@ def skip(group: str, name: str, reason: str) -> None:
     print(f"  ⏭️  {name}  —— 跳过：{reason}")
 
 
+# 离线验收的样本标的。**不在 git 里**（data/ 是数据不是代码），而且它已经从
+# symbols.yaml 摘掉了（主连不可下单），所以任何一台新机器 backfill 都不会生成它。
+SAMPLE_UID = "CN.SHFE.rb.CONT"
+SAMPLE_HOWTO = (
+    f"缺少离线样本数据 {SAMPLE_UID}。它不随仓库分发，用 "
+    f"`scripts/build_continuous.py {SAMPLE_UID} 2025-01-01 2026-08-31` 生成后再跑。"
+)
+
+
+def sample_ready() -> bool:
+    """样本数据在不在。**不在就整组跳过，不是记失败** —— 见 skip() 的说明。
+
+    踩过：Windows 上没有这份数据，于是数据组两条红、引擎组 KeyError、
+    API 组连锁超时，**一共 7 条假红**，真正该看的东西全淹了。
+    脚本自己的原则写在 skip() 里，这里当时没照做。
+    """
+    base = ROOT / "data" / "bars" / SAMPLE_UID.split(".", 1)[0] / SAMPLE_UID
+    return base.is_dir() and any(base.rglob("*.parquet"))
+
+
 def run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
     return subprocess.run(  # noqa: S603
         cmd, cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -103,13 +123,19 @@ def group_data() -> None:
         check("数据", f"交易日历：{label}", got is want, f"得到 {got}")
     check("数据", "2026 节假日表非空", len(cal.holidays) >= 15, f"{len(cal.holidays)} 天")
 
+    if not sample_ready():
+        for tf in ("1m", "1d"):
+            skip("数据", f"样本数据 {SAMPLE_UID} {tf}", SAMPLE_HOWTO)
+        skip("数据", "主连元数据含换月平移量", SAMPLE_HOWTO)
+        return
+
     root = ROOT / "data" / "bars"
-    for uid, tf, least in (("CN.SHFE.rb.CONT", Timeframe.M1, 10000),
-                           ("CN.SHFE.rb.CONT", Timeframe.D1, 50)):
+    for uid, tf, least in ((SAMPLE_UID, Timeframe.M1, 10000),
+                           (SAMPLE_UID, Timeframe.D1, 50)):
         n = len(read_range(root, uid, tf, 0, 2**31))
         check("数据", f"样本数据 {uid} {tf.value}", n >= least, f"{n} 根")
 
-    meta = ROOT / "data" / "bars" / "_continuous" / "CN.SHFE.rb.CONT.json"
+    meta = ROOT / "data" / "bars" / "_continuous" / f"{SAMPLE_UID}.json"
     if meta.exists():
         m = json.loads(meta.read_text(encoding="utf-8"))
         check("数据", "主连元数据含换月平移量",
@@ -141,9 +167,15 @@ emit: {direction: long, ttl: 48 bars, dedup_key: "{symbol}:{rule}:{trend_bar_clo
     need = {t.value for t in rule.required_timeframes}
     check("引擎", "跨级别 at() 与日线一起编译", need == {"1d", "1h", "5m"}, str(sorted(need)))
 
-    bars = read_range(ROOT / "data" / "bars", "CN.SHFE.rb.CONT", Timeframe.M1, 0, 2**31)
-    a = run_trial(rule, {"CN.SHFE.rb.CONT": bars})
-    b = run_trial(rule, {"CN.SHFE.rb.CONT": bars})
+    if not sample_ready():
+        for name in ("试算跑出信号", "同一批输入结果可复现", "各级别条件区间有数据",
+                     "日线均线预热期是「未知」不是「不成立」"):
+            skip("引擎", name, SAMPLE_HOWTO)
+        return
+
+    bars = read_range(ROOT / "data" / "bars", SAMPLE_UID, Timeframe.M1, 0, 2**31)
+    a = run_trial(rule, {SAMPLE_UID: bars})
+    b = run_trial(rule, {SAMPLE_UID: bars})
     check("引擎", "试算跑出信号", len(a.signals) > 0, f"{len(a.signals)} 条")
     check("引擎", "同一批输入结果可复现",
           [s.as_dict() for s in a.signals] == [s.as_dict() for s in b.signals])
@@ -233,16 +265,21 @@ def group_api(tmp: pathlib.Path) -> None:
         for path in ("/api/health", "/api/signals", "/api/stats", "/api/trade"):
             check("API", path, _get(base + path)[0] == 200)
 
-        for tf, least in (("1m", 10000), ("1h", 300), ("1d", 50)):
-            code, body = _get(f"{base}/api/bars?symbol=CN.SHFE.rb.CONT&timeframe={tf}&limit=5")
-            assert isinstance(body, dict)
-            check("API", f"/api/bars {tf}", code == 200 and body["total"] >= least,
-                  f"{body.get('total')} 根")
-        check("API", "/api/markers 日线不再除零",
-              _get(base + "/api/markers?symbol=CN.SHFE.rb.CONT&timeframe=1d")[0] == 200)
+        if sample_ready():
+            for tf, least in (("1m", 10000), ("1h", 300), ("1d", 50)):
+                code, body = _get(f"{base}/api/bars?symbol={SAMPLE_UID}&timeframe={tf}&limit=5")
+                assert isinstance(body, dict)
+                check("API", f"/api/bars {tf}", code == 200 and body["total"] >= least,
+                      f"{body.get('total')} 根")
+            check("API", "/api/markers 日线不再除零",
+                  _get(base + f"/api/markers?symbol={SAMPLE_UID}&timeframe=1d")[0] == 200)
+        else:
+            for tf in ("1m", "1h", "1d"):
+                skip("API", f"/api/bars {tf}", SAMPLE_HOWTO)
+            skip("API", "/api/markers 日线不再除零", SAMPLE_HOWTO)
 
         # --- 规则 CRUD 全流程 ---
-        good = ("id: acceptance-tmp\nuniverse: [CN.SHFE.rb.CONT]\n"
+        good = (f"id: acceptance-tmp\nuniverse: [{SAMPLE_UID}]\n"
                 "conditions:\n  - on: 5m\n    mode: state\n    when: close > 0\n"
                 'emit: {direction: long, dedup_key: "{symbol}:{rule}:{bar_close_ts}"}\n')
         code, body = _send("POST", base + "/api/rules/validate", {"source": good})
@@ -271,12 +308,17 @@ def group_api(tmp: pathlib.Path) -> None:
               _send("PUT", base + "/api/rules/acceptance-tmp",
                     {"source": good.replace("close > 0", "close > 1")})[0] == 200)
 
-        code, body = _send("POST", base + "/api/rules/trial",
-                           {"source": good, "horizon_bars": 20})
-        assert isinstance(body, dict)
-        check("规则", "历史试算", code == 200 and body["bars_scanned"] > 0,
-              f"{body.get('bars_scanned')} 根")
-        check("规则", "试算含各级别条件区间", bool(body.get("condition_bands")))
+        # 试算的 universe 就是上面那条临时规则里的 SAMPLE_UID，没数据就没得试算
+        if sample_ready():
+            code, body = _send("POST", base + "/api/rules/trial",
+                               {"source": good, "horizon_bars": 20})
+            assert isinstance(body, dict)
+            check("规则", "历史试算", code == 200 and body["bars_scanned"] > 0,
+                  f"{body.get('bars_scanned')} 根")
+            check("规则", "试算含各级别条件区间", bool(body.get("condition_bands")))
+        else:
+            skip("规则", "历史试算", SAMPLE_HOWTO)
+            skip("规则", "试算含各级别条件区间", SAMPLE_HOWTO)
 
         code, body = _send("DELETE", base + "/api/rules/acceptance-tmp")
         assert isinstance(body, dict)

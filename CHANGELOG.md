@@ -5,6 +5,19 @@
 ## [Unreleased]
 
 ### Fixed
+- **Windows 上的验收假红（7 条），两个都是代码缺陷不是环境问题。**
+  1. `acceptance.py` 硬编码 `CN.SHFE.rb.CONT` 当离线样本。它**不随仓库分发**
+     （`data/` 是数据不是代码），而且已从 `symbols.yaml` 摘掉（主连不可下单），
+     所以**任何一台新机器 backfill 都不会生成它** —— 数据组两条红、引擎组 KeyError、
+     API 组连锁超时。脚本自己的 `skip()` 注释写着"环境缺东西不算失败，记成失败会让
+     每台新机器都冒出假红，真正的缺陷就淹没在里面了"，它没照做。
+     现在缺样本就整组跳过并给出生成命令：无样本 **36/36 通过 + 13 跳过、零假红**，
+     有样本仍是 49/49。已用"临时移走样本目录"双向验证。
+  2. mypy 的 `warn_unused_ignores` 在两台机器上结论相反：typeshed 用
+     `sys.platform == "win32"` 决定要不要暴露 `ctypes.WinDLL`，
+     `runtime_store.py` 那两处 `# type: ignore[attr-defined]` 在 Linux 上**必须有**、
+     在 Windows 上**是多余的**。这不是"某个 Python 版本特有"，是每台 Windows 都会红。
+     `[tool.mypy] platform = "linux"` 把平台钉死，两边结论一致。
 - **`rule_eval.py` 把 95% 区间画在了毛期望上，判据却是超额。** 面板
   （`app.js renderExcess`）一直按超额画，是 CLI 跟它分了家 —— 同一个量两处
   各写一套的老问题。后果不是显示难看，是**结论会反过来**：Windows 全量样本上

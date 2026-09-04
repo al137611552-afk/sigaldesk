@@ -46,6 +46,14 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.mypy]
 python_version = "3.12"
+# **把平台钉死，否则同一份代码在两台机器上结论相反。**
+# typeshed 用 `sys.platform == "win32"` 来决定要不要暴露 ctypes.WinDLL 等符号，
+# 而 mypy 默认取宿主平台。于是 store/runtime_store.py 里那两处
+# `# type: ignore[attr-defined]`：在 Linux 上**必须有**（符号不可见），
+# 在 Windows 上**是多余的**，strict 的 warn_unused_ignores 当场报错。
+# 结果是开发机全绿、Windows 验收必红两条，而且每台 Windows 都会红 ——
+# 假红一多，真缺陷就淹没在里面了（acceptance.py 的 skip() 注释说的正是这件事）。
+platform = "linux"
 strict = true
 files = ["src"]
 
