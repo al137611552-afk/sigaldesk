@@ -184,3 +184,20 @@ def test_trial_evaluates_signals_older_than_the_store_memory_cap() -> None:
     # 每条信号的 entry 都要各不相同 —— 全挤在同一根上正是那个 bug 的表征
     entries = [o.entry_ts for o in res.outcomes if o.evaluated]
     assert len(set(entries)) == len(entries), "不同信号被评价到了同一根 bar 上"
+
+
+def test_trial_runs_a_disabled_rule() -> None:
+    """**试算无视 `enabled: false`。**
+
+    `RuleEngine` 会过滤掉未启用的规则 —— 那是给盯盘用的开关。而试算问的是
+    "如果开了会怎样"。不无视的话，变体规则（按惯例都写 `enabled: false`，
+    免得误入盯盘）试算会**静默返回 0 条**，被读成"这条规则不触发"。
+    没有报错、没有告警，查半天才发现根本没求值。
+    """
+    src = dict(SINGLE, enabled=False)
+    rule = load_rule(src)
+    assert rule.enabled is False
+
+    res = run_trial(rule, {UID: bars([99.0, 101.0, 102.0, 103.0])})
+    assert res.signals, "enabled: false 不应该让试算变成空跑"
+    assert res.condition_counts, "条件判定也该照常记录"

@@ -126,13 +126,17 @@ def main() -> int:
     ap.add_argument("symbol", help="标的 uid，如 CN.CFFEX.IM2609")
     ap.add_argument("--rule", help="只看这一条规则；不给就看全部启用的")
     ap.add_argument("--data-root", default=str(ROOT / "data" / "bars"))
+    # 与 rule_eval.py 一致：试变体时指向副本，**别动 config/rules**（盯盘进程正在用它）
+    ap.add_argument("--rules-dir", default=str(ROOT / "config" / "rules"),
+                    help="规则目录；试变体时指向副本，别动 config/rules")
     args = ap.parse_args()
 
     reg = load_registry(ROOT / "config")
-    rules = [r for r in load_rules(ROOT / "config" / "rules", registry=reg)
+    rules_dir = pathlib.Path(args.rules_dir)
+    rules = [r for r in load_rules(rules_dir, registry=reg)
              if not args.rule or r.id == args.rule]
     if not rules:
-        print(f"没有这条规则：{args.rule}")
+        print(f"{rules_dir} 里没有这条规则：{args.rule}")
         return 2
 
     uid = args.symbol

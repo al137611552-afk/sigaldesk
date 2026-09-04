@@ -157,7 +157,11 @@ def run_trial(
 
     store = BarStore(timeframes=derived_timeframes(rule))
     recorder = ConditionRecorder()
-    engine = RuleEngine([rule], store, recorder=recorder)
+    # **试算无视 enabled。** `RuleEngine` 会过滤掉 `enabled: false` 的规则，
+    # 而试算问的是"如果开了会怎样"—— enabled 是给盯盘用的开关，不是给回测的。
+    # 不这么做的话：变体规则按惯例都写 enabled: false（免得误入盯盘），
+    # 试算就**静默返回 0 条**，被读成"这条规则不触发"。踩过一次，查了半天。
+    engine = RuleEngine([replace(rule, enabled=True)], store, recorder=recorder)
 
     merged: list[Bar] = sorted(
         (b for bars in series.values() for b in bars if b.closed),
