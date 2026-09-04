@@ -458,3 +458,48 @@ def test_excess_interval_is_centred_on_the_excess_not_the_gross() -> None:
     assert lo < 0 < hi, "超额的区间应当跨零"
     # 两种画法只差一个基准
     assert (gross - 2 * se) - lo == pytest.approx(base)
+
+
+def test_random_baseline_uses_the_same_exit_convention_as_the_rule() -> None:
+    """**基准和规则必须用同一套出场口径，否则"超额"里混进止损宽度差。**
+
+    `random_entry_expectation` 造的假信号原来不带 context，于是 `risk_distances`
+    静默回落到百分比止损，而规则的信号带着 `atr14` 走 ATR 倍数 ——
+    实测规则 87 笔全 `atr`、基准 602 笔全 `pct`，两边根本不是一套口径。
+    BTC 上这一项让基准从 +0.0029% 虚高到 +0.0184%，
+    **和我们要分辨的超额同一量级**，结论会被它带偏。
+
+    模块文档一直宣称"用同一个 evaluate_all 是关键 —— 两者之差才只包含选时"。
+    函数共用挡不住，分家的是喂进去的数据。
+    """
+    from sigdesk.stats.baseline import random_entry_expectation
+
+    bars = flat_path(0, [100.0 + (i % 5) for i in range(200)])
+    # 造一段有真实波动的序列，让 ATR 算得出来
+    bars = [bar(60 * i, 100.0 + i * 0.1, 100.6 + i * 0.1, 99.4 + i * 0.1, 100.2 + i * 0.1)
+            for i in range(1, 201)]
+
+    exp_atr, n = random_entry_expectation(bars, Direction.LONG, OutcomeParams(), stride=10)
+    exp_pct, _ = random_entry_expectation(
+        bars, Direction.LONG, OutcomeParams(atr_key=None), stride=10)
+    assert n > 0
+
+    # 口径不同必然给出不同的基准 —— 相等就说明 atr_key 根本没生效
+    assert exp_atr != exp_pct, "基准没有跟着 atr_key 走，说明假信号仍然不带 context"
+
+    # 直接查每一笔用的口径
+    import collections
+
+    from sigdesk.indicators.bars import ATR
+    from sigdesk.rules.model import Signal
+    from sigdesk.stats.outcome import evaluate_all
+
+    atr = ATR(14)
+    vals = [atr.update(b) for b in bars]
+    fake = [Signal(rule_id="__random__", symbol=b.symbol, direction=Direction.LONG,
+                   timeframe=b.timeframe, fired_at=b.close_ts, trigger_price=b.close,
+                   dedup_key=f"r{i}", context={"atr14": vals[i]})
+            for i, b in enumerate(bars) if i % 10 == 0]
+    got = collections.Counter(
+        o.exit_basis for o in evaluate_all(fake, {BTC: list(bars)}, OutcomeParams()))
+    assert got["atr"] > got["pct"], f"基准应以 ATR 口径为主，实际 {dict(got)}"

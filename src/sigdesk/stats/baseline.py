@@ -10,6 +10,11 @@
 随机进场 = 在该标的扳机周期的每一根 bar 上、以同方向、**同一套出场口径**开一笔，
 取平均。它回答的是"在这段行情里闭着眼睛做，期望是多少"。
 用同一个 `evaluate_all` 是关键 —— 两者之差才只包含"选时"，不掺口径差异。
+
+**"同一套口径"要真的做到，不能只靠调同一个函数。** 假信号必须带上
+`params.atr_key` 那个值，否则 risk_distances 静默回落到百分比止损，而规则的信号
+走 ATR 倍数：超额里就混进了止损宽度差。这条曾经就是坏的（规则全 atr、基准全 pct），
+表面上毫无异常。函数共用挡不住，分家的是**喂进去的数据**。
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from ..core.models import Bar
+from ..indicators.bars import ATR
 from ..rules.model import Direction, Signal
 from .outcome import ExitReason, Outcome, OutcomeParams, evaluate_all
 from .report import summarize
@@ -38,14 +44,29 @@ def random_entry_expectation(
     """在抽样到的每一根 bar 上开一笔同方向的单，返回 (平均收益, 样本数)。"""
     if not bars:
         return 0.0, 0
-    picked = list(bars[::max(1, stride)])
+    # **每根假信号都要带上 params.atr_key 那个值。** 不带的话 risk_distances 会
+    # 静默回落到百分比止损，而规则的信号走的是 ATR 倍数 —— 于是"超额"里混进了
+    # **止损宽度差**，不再只是选时。这正是本文件开头宣称"同一套出场口径"要排除的
+    # 东西，而它以前根本没做到（实测：规则 87 笔全 atr、基准 602 笔全 pct）。
+    #
+    # ATR 在**扳机周期**上滚动计算，与引擎给信号快照里 `atr14` 的口径一致
+    # （规则的 `context:` 就是在扳机周期上求值的，见 engine._snapshot）。
+    ctx_key = params.atr_key
+    atr_at: list[float | None] = []
+    if ctx_key:
+        atr = ATR(14)
+        for b in bars:
+            atr_at.append(atr.update(b))
+    picked_idx = range(0, len(bars), max(1, stride))
     fake = [
         Signal(
-            rule_id="__random__", symbol=b.symbol, direction=direction,  # type: ignore[arg-type]
-            timeframe=b.timeframe, fired_at=b.close_ts, trigger_price=b.close,
-            dedup_key=f"r{i}",
+            rule_id="__random__", symbol=bars[j].symbol,
+            direction=direction,  # type: ignore[arg-type]
+            timeframe=bars[j].timeframe, fired_at=bars[j].close_ts,
+            trigger_price=bars[j].close, dedup_key=f"r{i}",
+            context={ctx_key: atr_at[j]} if ctx_key else {},
         )
-        for i, b in enumerate(picked)
+        for i, j in enumerate(picked_idx)
     ]
     if not fake:
         return 0.0, 0
