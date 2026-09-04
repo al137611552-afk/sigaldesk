@@ -7,6 +7,9 @@
 from __future__ import annotations
 
 import datetime as dt
+import pathlib
+from dataclasses import replace
+from typing import Any
 
 import pytest
 
@@ -320,3 +323,64 @@ def test_evaluate_all_only_uses_bars_after_the_signal() -> None:
 def test_evaluate_all_handles_unknown_symbol() -> None:
     (out,) = evaluate_all([sig(symbol="NOPE")], {BTC: flat_path(0, [1.0])})
     assert out.reason is ExitReason.NO_DATA
+
+
+# ---------------------------------------------------------------- 有效样本量
+
+
+def _outcome(sym: str, entry: int, exit_ts: int) -> Any:
+    from sigdesk.rules.model import Direction
+    from sigdesk.stats.outcome import ExitReason, Outcome
+
+    return Outcome(rule_id="r", symbol=sym, direction=Direction.LONG, fired_at=entry,
+                   entry_ts=entry, entry_price=1.0, exit_ts=exit_ts, exit_price=1.0,
+                   reason=ExitReason.HORIZON, ret=0.0, gross_ret=0.0, mfe=0.0, mae=0.0,
+                   bars_held=1)
+
+
+def test_effective_n_discounts_overlapping_holds() -> None:
+    """**`stdev/sqrt(n)` 假设信号相互独立，但持有期比冷却期长时它们不独立** ——
+    同一段价格变动会被好几条信号同时吃到。
+
+    实例：扳机换到 1m 后名义 n=250、SE ±0.0073%，看着像 6.7 个标准误的强证据；
+    按重叠折算后有效 n 只有 7、SE ±0.0440%，区间当场跨零 ——
+    **结论从「唯一站得住的改动」变成「测不出差别」。**
+    """
+    from sigdesk.stats.baseline import effective_n
+
+    # 完全不重叠 -> 有效样本量就是条数
+    assert effective_n([_outcome("A", i * 1000, i * 1000 + 100) for i in range(10)]) == 10
+
+    # 全部压在同一段 -> 只值一条
+    assert effective_n([_outcome("A", 0, 1000) for _ in range(10)]) == pytest.approx(1.0)
+
+    # 每 30 开一笔、持有 100 -> 每条与 |i-j|<=3 的 7 条相交 -> n/7
+    roll = [_outcome("A", i * 30, i * 30 + 100) for i in range(60)]
+    assert 7 <= effective_n(roll) <= 11, "滚动开仓的有效样本量该在 n/7 附近"
+
+    # **跨标的不算重叠**：不同品种的价格变动是两回事
+    assert effective_n([_outcome("A", 0, 1000), _outcome("B", 0, 1000)]) == 2
+
+
+def test_standard_error_uses_effective_n() -> None:
+    """标准误必须按有效样本量算，否则系统性偏小。"""
+    import statistics as _st
+
+    from sigdesk.stats.baseline import standard_error
+
+    # 十条完全重叠、收益各异 -> SE 应当接近 stdev/sqrt(1) 而不是 /sqrt(10)
+    outs = []
+    for i in range(10):
+        o = _outcome("A", 0, 1000)
+        outs.append(replace(o, ret=(i - 4.5) / 1000))
+    sd = _st.stdev([o.ret for o in outs])
+    assert standard_error(outs) == pytest.approx(sd, rel=0.01), "全重叠时不该再除 sqrt(10)"
+
+
+def test_cli_and_library_share_one_standard_error() -> None:
+    """**同一个量不许两处各写一套。** `rule_eval.py` 原来自己算了一遍
+    `stdev/sqrt(n)`，于是修了库里那份、CLI 还在报旧值（真踩过）。"""
+    src = pathlib.Path("scripts/rule_eval.py").read_text(encoding="utf-8")
+    code = "\n".join(ln for ln in src.splitlines() if not ln.strip().startswith("#"))
+    assert "standard_error(" in code, "CLI 要用库里那份"
+    assert "statistics.stdev" not in code, "CLI 不许自己再算一遍标准误"

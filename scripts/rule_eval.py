@@ -21,9 +21,7 @@
 from __future__ import annotations
 
 import argparse
-import math
 import pathlib
-import statistics
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
@@ -33,7 +31,11 @@ from sigdesk.core.registry import load_registry  # noqa: E402
 from sigdesk.rules.loader import load_rules  # noqa: E402
 from sigdesk.rules.model import Rule  # noqa: E402
 from sigdesk.rules.trial import run_trial  # noqa: E402
-from sigdesk.stats.baseline import random_entry_expectation  # noqa: E402
+from sigdesk.stats.baseline import (  # noqa: E402
+    effective_n,
+    random_entry_expectation,
+    standard_error,
+)
 from sigdesk.stats.outcome import ExitReason, OutcomeParams  # noqa: E402
 from sigdesk.stats.report import summarize  # noqa: E402
 from sigdesk.store.bar_builder import aggregate  # noqa: E402
@@ -81,12 +83,17 @@ def evaluate_rule(
 
     # **必须给标准误**：几十条信号时，"超额 +0.02% vs -0.04%" 可能全在噪声里。
     # 不给的话，很容易把一次抽样波动当成"改好了/改坏了"。
+    #
+    # **用库里那一份**（stats/baseline.py），它按持仓重叠折算了有效样本量。
+    # 这里原来自己算了一遍 `stdev/sqrt(n)`，于是修了库里那份、CLI 还在报旧值 ——
+    # 同一个量两处各写一套，迟早分家。
     rets = [o.ret for o in res.outcomes if o.reason is not ExitReason.NO_DATA]
-    se = statistics.stdev(rets) / math.sqrt(len(rets)) if len(rets) > 1 else float("nan")
+    se = standard_error(res.outcomes)
+    n_eff = effective_n(res.outcomes)
 
     return {"signals": total, "gross": st.avg_return, "win": st.win_rate,
             "base": base, "excess": st.avg_return - base, "parts": parts,
-            "se": se, "n_eval": len(rets),
+            "se": se, "n_eval": len(rets), "n_eff": n_eff,
             "scanned": res.symbols_scanned, "trig_tf": trig_tf}
 
 
@@ -96,13 +103,18 @@ def main() -> int:
     ap.add_argument("rule_id", nargs="?", help="规则 id；不给就配合 --all")
     ap.add_argument("--all", action="store_true", help="跑全部已启用的规则")
     ap.add_argument("--data-root", default=str(ROOT / "data" / "bars"))
+    # **试变体不要改 config/rules/** —— 那是盯盘进程正在用的配置。
+    # 把变体放别处、用这个参数指过去，实盘配置一个字都不用动
+    # （我自己就因为忘了恢复，差点拿改过的配置报了一组错数）。
+    ap.add_argument("--rules-dir", default=str(ROOT / "config" / "rules"),
+                    help="规则目录；试变体时指向副本，别动 config/rules")
     ap.add_argument("--cost-bps", type=float, default=0.0, help="单边成本（基点）")
     ap.add_argument("--horizon", type=int, default=20, help="持有期（扳机周期根数）")
     ap.add_argument("--stride", type=int, default=10, help="基准抽样步长（越小越准越慢）")
     args = ap.parse_args()
 
     reg = load_registry(ROOT / "config")
-    rules = {r.id: r for r in load_rules(ROOT / "config" / "rules", registry=reg)}
+    rules = {r.id: r for r in load_rules(pathlib.Path(args.rules_dir), registry=reg)}
     if args.all:
         targets = list(rules.values())
     elif args.rule_id in rules:
@@ -134,7 +146,8 @@ def main() -> int:
         print(f"   {r['signals']:>4} 条   胜率 {r['win'] * 100:.1f}%   "
               f"毛期望 {r['gross'] * 100:+.4f}%   加权基准 {r['base'] * 100:+.4f}%   "
               f"**超额 {r['excess'] * 100:+.4f}%**")
-        print(f"        毛期望标准误 ±{r['se'] * 100:.4f}%（n={r['n_eval']}）"
+        print(f"        毛期望标准误 ±{r['se'] * 100:.4f}%"
+              f"（n={r['n_eval']}，按持仓重叠折算后有效 n={r['n_eff']:.0f}）"
               f"　→ 95% 区间约 {(r['gross'] - 2 * r['se']) * 100:+.4f}% ~ "
               f"{(r['gross'] + 2 * r['se']) * 100:+.4f}%")
         for uid, n, exp, k in r["parts"]:

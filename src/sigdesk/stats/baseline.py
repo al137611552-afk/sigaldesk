@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import bisect
 import math
 import statistics
 from collections.abc import Mapping, Sequence
@@ -52,16 +53,50 @@ def random_entry_expectation(
     return st.avg_return, st.evaluated
 
 
+def effective_n(outcomes: Sequence[Outcome]) -> float:
+    """按**持仓重叠**折算的有效样本量。
+
+    `stdev/sqrt(n)` 假设每条信号相互独立，但**持有期比冷却期长时它们不独立** ——
+    同一段价格变动会被好几条信号同时吃到。实例：冷却 30 分钟、持有 100 分钟，
+    同一段行情最多被 3.3 条信号共用，名义 n=250 的真实信息量只有约 76。
+
+    做法：对每条信号数一数「同一标的、持仓区间与它相交」的条数（含自己），
+    取平均得到重叠倍数 m，`n_eff = n / m`。这是 Newey-West/HAC 的一个朴素近似 ——
+    它只算**同标的**的重叠，跨标的的相关性（行情齐涨齐跌）没有计入，
+    所以给出的仍是**乐观**估计，只是没原来那么乐观。
+    """
+    usable = [o for o in outcomes if o.reason is not ExitReason.NO_DATA]
+    if len(usable) < 2:
+        return float(len(usable))
+    by_sym: dict[str, list[tuple[int, int]]] = {}
+    for o in usable:
+        by_sym.setdefault(o.symbol, []).append((o.entry_ts, max(o.exit_ts, o.entry_ts)))
+    total = 0
+    for spans in by_sym.values():
+        spans.sort()
+        starts = [a for a, _ in spans]
+        for a, b in spans:
+            # 与 [a, b] 相交 = 起点 <= b **且** 终点 >= a。
+            # 起点已排序，所以候选是前 lo 个；终点没排序，逐个判。
+            lo = bisect.bisect_right(starts, b)
+            total += sum(1 for k in range(lo) if spans[k][1] >= a)
+    m = total / len(usable)
+    return len(usable) / max(1.0, m)
+
+
 def standard_error(outcomes: Sequence[Outcome]) -> float:
-    """每条信号净收益的标准误。
+    """每条信号净收益的标准误，**按持仓重叠折算过有效样本量**。
 
     **面板必须给它。** 「胜率 45.5%」看着像事实，但 44 条信号的 95% 区间约 ±15 个
     百分点 —— 不给不确定性，就会把抽样噪声当成结论（这一轮反复发生过）。
+
+    而不折算重叠的话它会**系统性偏小**：扳机换到 1m 后名义 n=250、SE ±0.0073%，
+    看着像 6.7 个标准误的强证据，按重叠折算后只有 3.7 个。
     """
     rets = [o.ret for o in outcomes if o.reason is not ExitReason.NO_DATA]
     if len(rets) < 2:
         return float("nan")
-    return statistics.stdev(rets) / math.sqrt(len(rets))
+    return statistics.stdev(rets) / math.sqrt(max(1.0, effective_n(outcomes)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,6 +198,6 @@ def horizon_curve(
 
 
 __all__ = [
-    "CURVE_STRIDE", "HORIZON_LADDER", "Baseline", "horizon_curve",
+    "CURVE_STRIDE", "HORIZON_LADDER", "Baseline", "effective_n", "horizon_curve",
     "random_entry_expectation", "standard_error", "weighted_baseline",
 ]
