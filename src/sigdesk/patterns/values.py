@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -49,7 +50,7 @@ class Series:
     """
 
     name: str
-    values: tuple[float, ...]
+    values: Sequence[float]
 
     @property
     def cur(self) -> float | None:

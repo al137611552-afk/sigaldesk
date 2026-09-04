@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from ..core.models import Bar
 from ..indicators.bars import ATR
 from .context import EvalContext
@@ -81,7 +83,7 @@ def _extreme(src: object, count: int, *, high: bool) -> Level:
 
 
 def _swing_points(
-    bars: tuple[Bar, ...], n: int, *, high: bool, want: int = 2
+    bars: Sequence[Bar], n: int, *, high: bool, want: int = 2
 ) -> list[tuple[int, float]]:
     """已确认的摆动点 ``(下标, 价格)``，由新到旧。
 
@@ -105,7 +107,7 @@ def _swing_points(
     return out
 
 
-def _swings(bars: tuple[Bar, ...], n: int, *, high: bool) -> list[float]:
+def _swings(bars: Sequence[Bar], n: int, *, high: bool) -> list[float]:
     return [price for _, price in _swing_points(bars, n, high=high)]
 
 

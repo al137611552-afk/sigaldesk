@@ -93,8 +93,8 @@ class _ViewSource:
     engine: Any
     symbol: str
 
-    def bars_at(self, timeframe: Timeframe) -> tuple[Bar, ...]:
-        bars: tuple[Bar, ...] = self.view.bars(timeframe)
+    def bars_at(self, timeframe: Timeframe) -> Sequence[Bar]:
+        bars: Sequence[Bar] = self.view.bars(timeframe)
         if not bars and timeframe not in (*self.view_timeframes(), Timeframe.M1):
             raise ValueError(
                 f"at('{timeframe.value}', ...) 取不到数据：BarStore 没有派生 {timeframe.value}。"

@@ -12,8 +12,9 @@
 from __future__ import annotations
 
 import bisect
-from collections.abc import Iterable, Sequence
-from typing import Final
+from collections.abc import Iterable, Iterator, Sequence
+from itertools import islice
+from typing import Any, Final
 
 from ..core.models import Bar, Timeframe
 from .bar_builder import BarBuilder, CalendarBuilder, make_builder
@@ -40,33 +41,91 @@ def _as_timeframe(tf: Timeframe | str) -> Timeframe:
     return tf if isinstance(tf, Timeframe) else Timeframe(tf)
 
 
+class _Prefix(Sequence[Bar]):
+    """某条 bar 列表的前 ``n`` 根的只读视图。**不拷贝**。
+
+    为什么不直接 ``tuple(seq[:n])``：回测里每根 bar 都要为每个角色建一个 BarView，
+    一拷就是最多 MAX_BARS 根，于是"每根 bar O(总根数)"——整体退化成平方。
+    1m 当扳机时 bar 数是 1h 的 60 倍，两边同时放大，表现就是"跑不完"。
+
+    截断语义（INV-1）照旧成立：越过 ``n`` 的下标一律 IndexError，切片也夹在 ``n`` 内，
+    看不到未来。底层 list 只在尾部追加，裁剪走的是"换一条新 list"（见 ``_append``），
+    所以已经发出去的视图不会被就地改动。
+    """
+
+    __slots__ = ("_n", "_seq")
+
+    def __init__(self, seq: list[Bar], n: int) -> None:
+        self._seq = seq
+        self._n = n
+
+    def __len__(self) -> int:
+        return self._n
+
+    def __getitem__(self, index: Any) -> Any:
+        if isinstance(index, slice):
+            start, stop, step = index.indices(self._n)
+            if step == 1:
+                return tuple(self._seq[start:stop])
+            return tuple(self._seq[i] for i in range(start, stop, step))
+        i = index + self._n if index < 0 else index
+        if not 0 <= i < self._n:
+            raise IndexError(index)
+        return self._seq[i]
+
+    def __iter__(self) -> Iterator[Bar]:
+        return islice(iter(self._seq), self._n)
+
+    def __eq__(self, other: object) -> bool:
+        """能和元组/列表直接比较 —— 它对下游就是"那一段 bar"，
+        换成不拷贝的实现不该让调用方改写比较方式。"""
+        if isinstance(other, _Prefix):
+            other = tuple(other)
+        if isinstance(other, (tuple, list)):
+            return self._n == len(other) and all(a == b for a, b in zip(self, other, strict=True))
+        return NotImplemented
+
+    __hash__ = None  # type: ignore[assignment]  # 可变底层，不给哈希
+
+    def __repr__(self) -> str:
+        return f"<bars n={self._n}>"
+
+
 class BarView:
     """某个 symbol 在某个时刻的只读切面。构造时即完成截断，之后不会再变。
 
     ``bars()`` 返回的一定满足 ``close_ts <= as_of`` 且 ``closed=True``。
     """
 
-    __slots__ = ("_cache", "_cut", "_series", "as_of", "symbol")
+    __slots__ = ("_cut", "_series", "as_of", "symbol")
 
     def __init__(self, symbol: str, as_of: int, series: dict[Timeframe, list[Bar]]) -> None:
         self.symbol = symbol
         self.as_of = as_of
-        self._series = series
-        # 截断位置在构造时就定死：即使之后 store 又收了新 bar，本视图也看不到
-        self._cut = {
-            tf: bisect.bisect_right([b.close_ts for b in bars], as_of)
-            for tf, bars in series.items()
-        }
-        self._cache: dict[Timeframe, tuple[Bar, ...]] = {}
+        # **构造时就把各周期的 list 对象定死**（只是拷一份引用，O(周期数)）。
+        # 裁剪时 store 会把 series[tf] 换成新 list，这里捕获早了就不会跟着换。
+        self._series = dict(series)
+        # 截断位置**按需**算：原来在这里给每个周期都算一遍，而且是先物化
+        # `[b.close_ts for b in bars]` 再二分——为了 O(log n) 的二分先付 O(n)，
+        # 且规则用不到的周期也照付。现在用 key= 直接二分，且只算问到的周期。
+        self._cut: dict[Timeframe, tuple[list[Bar], int]] = {}
 
-    def bars(self, timeframe: Timeframe | str) -> tuple[Bar, ...]:
+    def _cut_of(self, tf: Timeframe) -> tuple[list[Bar], int]:
+        """定死"哪条 list 的前几根"。**list 对象和截断位置必须一起捕获、一起缓存**：
+        裁剪时 store 会把 ``series[tf]`` 换成一条新 list（见 ``_append``），
+        如果这里每次重新 ``self._series.get(tf)``，就会拿新 list 配旧 cut ——
+        长度对得上、内容全错，还不报错。有回归测试钉住（test_bar_store）。
+        """
+        got = self._cut.get(tf)
+        if got is None:
+            seq = self._series.get(tf, [])
+            got = self._cut[tf] = (
+                seq, bisect.bisect_right(seq, self.as_of, key=lambda b: b.close_ts))
+        return got
+
+    def bars(self, timeframe: Timeframe | str) -> Sequence[Bar]:
         """该周期截至 as_of 的全部已收盘 bar，按时间升序。"""
-        tf = _as_timeframe(timeframe)
-        cached = self._cache.get(tf)
-        if cached is None:
-            cached = tuple(self._series.get(tf, [])[: self._cut.get(tf, 0)])
-            self._cache[tf] = cached
-        return cached
+        return _Prefix(*self._cut_of(_as_timeframe(timeframe)))
 
     def last(self, timeframe: Timeframe | str) -> Bar | None:
         """最近一根已收盘 bar；无数据返回 None。"""
@@ -193,7 +252,9 @@ class BarStore:
             else:
                 seq.insert(idx, bar)
         if len(seq) > self._max_bars + _TRIM_SLACK:
-            del seq[: len(seq) - self._max_bars]
+            # **换一条新 list，不就地 del** —— 已经发出去的 _Prefix 持有旧 list，
+            # 就地从头删会让它们的下标整体错位（悄悄读到错的 bar，不报错）。
+            series[tf] = seq[len(seq) - self._max_bars:]
 
 
 __all__ = ["DEFAULT_TIMEFRAMES", "MAX_BARS", "BarStore", "BarView"]

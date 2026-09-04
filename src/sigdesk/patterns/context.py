@@ -30,7 +30,7 @@ class TimeframeSource(Protocol):
     1h bar，不是正在走的那根。这既满足 INV-1（不看未来），也正是"大级别定方向"该有的语义。
     """
 
-    def bars_at(self, timeframe: Timeframe) -> tuple[Bar, ...]: ...
+    def bars_at(self, timeframe: Timeframe) -> Sequence[Bar]: ...
 
     def cache_at(self, timeframe: Timeframe) -> IndicatorCache: ...
 
@@ -57,11 +57,38 @@ class _State:
     cur: Any = None
     prev: Any = None
     history: deque[Any] = field(default_factory=lambda: deque(maxlen=MAX_LOOKBACK + 1))
+    # 物化过的历史 + 它对应的 last_ts。**每根 bar 只物化一次**：
+    # 原来每次求值都 `tuple(state.history)`，251 个元素 × 每根几次求值，
+    # profile 里这一条占了 398 万次调用，是最大的单项开销。
+    _frozen: tuple[Any, ...] = ()
+    _frozen_ts: int = -1
+    _picked: tuple[Any, ...] = ()
+    _picked_ts: int = -1
+
+    def frozen_history(self) -> tuple[Any, ...]:
+        if self._frozen_ts != self.last_ts:
+            self._frozen = tuple(self.history)
+            self._frozen_ts = self.last_ts
+        return self._frozen
+
+    def picked_history(self, pick: Callable[[Any], Any]) -> tuple[Any, ...]:
+        """``bar_level`` 用：历史里存的是整根 Bar/指标对象，还要 ``pick`` 出分量。
+        同一个 state 对应的 ``pick`` 语义恒定（key 里已经含了指标身份），所以
+        只按 last_ts 失效即可；调用方每次传的是新 lambda，不能拿它当缓存键。
+        """
+        if self._picked_ts != self.last_ts:
+            self._picked = tuple(pick(v) for v in self.history)
+            self._picked_ts = self.last_ts
+        return self._picked
 
 
 @dataclass(slots=True)
 class IndicatorCache:
     """按 (symbol, timeframe) 持有一组指标状态。跨 bar 存活，是增量性的载体。"""
+
+    # 逐列缓存（close/volume/close_ts…）。见 column() —— 没有它，
+    # 每次求值都要重建整条序列，细周期上直接退化成平方复杂度。
+    _cols: dict[tuple[Any, ...], list[Any]] = field(default_factory=dict)
 
     states: dict[tuple[Any, ...], _State] = field(default_factory=dict)
 
@@ -91,9 +118,31 @@ class IndicatorCache:
             state.last_ts = ts
         return state
 
+    def column(self, key: tuple[Any, ...], bars: Sequence[Bar], field: str) -> Sequence[Any]:
+        """按 (symbol, timeframe, 字段) 缓存一列，**只追加不重建**。
+
+        原来 `stamps()`/`series()` 每次求值都 `tuple(... for b in self.bars)`，
+        即每次 O(n)。在 1h 上只有几百根，感觉不到；**放到 1m 上就是 O(n²)** ——
+        实测 N 翻倍耗时翻 3~4 倍，2 万根的标的单跑就要几十秒，
+        66 个标的合起来看着像"卡死"（用户报的正是这个）。
+
+        bar 序列在回放里是**只追加**的，所以按长度差扩展即可；
+        长度变短（换标的/重跑）就重建，不能把旧值留着当新的用。
+        """
+        cur = self._cols.get(key)
+        if cur is None or len(cur) > len(bars):
+            cur = self._cols[key] = []
+        if len(cur) < len(bars):
+            cur.extend(getattr(b, field) for b in bars[len(cur):])
+        # **直接返回列表，不要 tuple(cur)** —— 拷贝是 O(n)，每次求值拷一遍
+        # 就等于缓存白做（第一版就是这么错的，profile 里 column 仍占大头）。
+        # 下游只做切片与二分，不改它；视为只读。
+        return cur
+
     def reset(self) -> None:
         """清空。换月、换标的或回测重跑时用 —— 残留状态会污染新序列。"""
         self.states.clear()
+        self._cols.clear()
 
 
 @dataclass(slots=True)
@@ -102,7 +151,7 @@ class EvalContext:
 
     symbol: str
     timeframe: Timeframe
-    bars: tuple[Bar, ...]  # 已按 as-of 截断的已收盘 bar，升序
+    bars: Sequence[Bar]  # 已按 as-of 截断的已收盘 bar，升序
     cache: IndicatorCache
     # 跨级别引用的取数口。为 None 时 at() 会明确报错，而不是静默给空序列 ——
     # 空序列会让指标恒为 None、条件恒"不成立"，是最难查的那种失败。
@@ -131,16 +180,18 @@ class EvalContext:
     def series(self, field_name: str) -> Series:
         if field_name not in FIELDS:
             raise KeyError(f"未知的 bar 字段 {field_name}；可用: {', '.join(FIELDS)}")
-        return Series(field_name, tuple(getattr(b, field_name) for b in self.bars))
+        return Series(field_name, self.cache.column(
+            (self.symbol, self.timeframe, field_name), self.bars, field_name))
 
-    def stamps(self) -> tuple[int, ...]:
-        return tuple(b.close_ts for b in self.bars)
+    def stamps(self) -> Sequence[int]:
+        return self.cache.column(
+            (self.symbol, self.timeframe, "close_ts"), self.bars, "close_ts")
 
     def level(self, key: tuple[Any, ...], factory: Callable[[], Any], src: Series) -> Level:
         """标量型指标（SMA/EMA/RSI/...）的取值入口。"""
         state = self.cache.level((self.symbol, self.timeframe, *key), factory, src.values,
                                  self.stamps())
-        return Level(cur=state.cur, prev=state.prev, history=tuple(state.history))
+        return Level(cur=state.cur, prev=state.prev, history=state.frozen_history())
 
     def bar_level(
         self, key: tuple[Any, ...], factory: Callable[[], Any], pick: Callable[[Any], float | None]
@@ -149,7 +200,7 @@ class EvalContext:
         state = self.cache.level((self.symbol, self.timeframe, *key), factory, self.bars,
                                  self.stamps())
         return Level(cur=pick(state.cur), prev=pick(state.prev),
-                     history=tuple(pick(v) for v in state.history))
+                     history=state.picked_history(pick))
 
 
 __all__ = ["FIELDS", "EvalContext", "IndicatorCache", "TimeframeSource"]

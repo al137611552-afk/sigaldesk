@@ -297,3 +297,40 @@ def test_resume_map_is_per_timeframe(crypto_1m: list[Bar]) -> None:
     assert m1 is not None and m5 is not None
     assert m5 % 300 == 0
     assert m5 <= m1 < m5 + 300
+
+
+def test_view_is_not_corrupted_by_later_trim() -> None:
+    """``bars()`` 不再拷贝（改成只读前缀视图，见 ``_Prefix``），于是多了一个
+    **静默错误**的可能：如果裁剪就地从列表头部 del，已经发出去的视图下标会整体
+    错位 —— 读到的是别的 bar，长度也对，不报错。所以裁剪必须换一条新 list。
+
+    这条测试就是钉住那个约束：先拿一个视图，再喂到触发裁剪，视图内容必须原样。
+    """
+    store = BarStore(timeframes=[], max_bars=100)
+    for i in range(1, 200):
+        store.push(bar(CRYPTO_UID, i * 60))
+    view = store.view(CRYPTO_UID, 2**31)
+    before = [b.close_ts for b in view.bars(Timeframe.M1)]
+    assert len(before) == 199  # 还没到 max_bars + _TRIM_SLACK，未裁剪
+
+    for i in range(200, 1200):  # 喂到必然触发裁剪
+        store.push(bar(CRYPTO_UID, i * 60))
+    assert [b.close_ts for b in view.bars(Timeframe.M1)] == before
+    assert view.bars(Timeframe.M1)[-1].close_ts == 199 * 60
+
+
+def test_view_never_sees_bars_pushed_after_it(crypto_1m: list[Bar]) -> None:
+    """INV-1 在不拷贝之后依然成立：视图只暴露构造时截断点以内的 bar。"""
+    store = BarStore(timeframes=[])
+    for i in range(1, 51):
+        store.push(bar(CRYPTO_UID, i * 60))
+    view = store.view(CRYPTO_UID, 30 * 60)
+    bars = view.bars(Timeframe.M1)
+    assert len(bars) == 30
+    for i in range(51, 80):  # 之后 store 又收了新 bar
+        store.push(bar(CRYPTO_UID, i * 60))
+    assert len(view.bars(Timeframe.M1)) == 30
+    with pytest.raises(IndexError):
+        view.bars(Timeframe.M1)[30]
+    assert view.bars(Timeframe.M1)[-1].close_ts == 30 * 60
+    assert [b.close_ts for b in view.bars(Timeframe.M1)[-3:]] == [28 * 60, 29 * 60, 30 * 60]

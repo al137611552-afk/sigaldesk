@@ -14,7 +14,7 @@ A/B 两档能表达的形态都能被未来的可视化编辑器结构化编辑�
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -56,7 +56,7 @@ class PatternCtx:
 
     symbol: str
     timeframe: Timeframe
-    bars: tuple[Bar, ...]
+    bars: Sequence[Bar]
     ind: PatternIndicators
     params: Mapping[str, Any]
 
